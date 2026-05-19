@@ -2,7 +2,23 @@ services:
   app:
     build:
       context: ..
-      dockerfile: .devcontainer/Dockerfile
+      dockerfile: ./.devcontainer/Dockerfile
     command: sleep infinity
+    privileged: true
+    cap_add:
+      - SYS_PTRACE
+    security_opt:
+      - seccomp:unconfined
+    ports:
+      # Dioxus fullstack dev server (examples)
+      - "8080:8080"
+      # Dioxus hot-reload port
+      - "8081:8081"
+    networks:
+      - local
     volumes:
-      - ../..:/workspaces/${localWorkspaceFolderBasename}:cached
+      - ../..:/workspaces:cached
+      - /var/run/docker.sock:/var/run/docker-host.sock
+
+networks:
+  local:

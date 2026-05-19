@@ -1,0 +1,53 @@
+FROM rust:1-slim-trixie AS rust-base
+FROM denoland/deno:bin AS deno-base
+
+FROM mcr.microsoft.com/devcontainers/base:ubuntu-24.04
+
+COPY --from=rust-base /usr/local/cargo /usr/local/cargo
+COPY --from=rust-base /usr/local/rustup /usr/local/rustup
+COPY --from=rust-base /usr/local/cargo/bin/rust-analyzer /usr/local/bin/rust-analyzer
+COPY --from=deno-base /deno /usr/local/bin/deno
+
+ENV RUSTUP_HOME=/usr/local/rustup \
+    CARGO_HOME=/usr/local/cargo \
+    PATH="/usr/local/cargo/bin:${PATH}"
+
+# System dependencies for Dioxus fullstack examples (desktop + web renderer)
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    build-essential curl pkg-config file lld clang \
+    libssl-dev libpq-dev \
+    libxdo-dev libayatana-appindicator3-dev librsvg2-dev \
+    libsoup-3.0-dev libwebkit2gtk-4.1-dev libgtk-3-dev \
+    && rm -rf /var/lib/apt/lists/*
+
+RUN chown -R vscode:vscode /usr/local/cargo /usr/local/rustup
+
+USER vscode
+WORKDIR /home/vscode
+
+# Rust toolchain components
+RUN rustup component add clippy rustfmt
+
+# Targets:
+#   wasm32-unknown-unknown — Dioxus web frontend + WASM plugins
+#   wasm32-wasip1          — Extism PDK plugins (WASI-based)
+RUN rustup target add wasm32-unknown-unknown
+RUN rustup target add wasm32-wasip1
+
+RUN curl -L --proto '=https' --tlsv1.2 -sSf \
+    https://raw.githubusercontent.com/cargo-bins/cargo-binstall/main/install-from-binstall-release.sh | bash
+
+# Core tooling
+RUN cargo binstall -y \
+    dioxus-cli \
+    wasm-pack \
+    cargo-tarpaulin \
+    just \
+    wasm-bindgen-cli
+
+# Extism CLI — for inspecting WASM plugin exports and testing outside Rust
+RUN curl -L https://raw.githubusercontent.com/extism/cli/main/install.sh | bash \
+    || echo "Extism CLI install failed — install manually with: cargo install extism-cli"
+
+ENV PATH="/home/vscode/.deno/bin:${PATH}"
+RUN deno install -fg npm:tailwind npm:@tailwindcss/cli

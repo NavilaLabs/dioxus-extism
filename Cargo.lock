@@ -3,5 +3,5 @@
 version = 4
 
 [[package]]
-name = "rust-lib"
+name = "dioxus-extism"
 version = "0.1.0"
