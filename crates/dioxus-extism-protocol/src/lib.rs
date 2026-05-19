@@ -472,6 +472,20 @@ pub struct SsrRouteTransforms {
     pub after: Vec<PluginView>,
 }
 
+/// Resolved transforms for one named component at render time.
+///
+/// Returned by `PluginRuntime::resolve_component` and used as the server function
+/// return type so it is available on `wasm32-unknown-unknown`.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ComponentResolution {
+    /// Views injected before the component's own output.
+    pub before: Vec<PluginView>,
+    /// If `Some`, replaces the component's own output entirely.
+    pub replacement: Option<PluginView>,
+    /// Views injected after the component's own output.
+    pub after: Vec<PluginView>,
+}
+
 /// SSR equivalent of `ComponentResolution`.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SsrComponentResolution {

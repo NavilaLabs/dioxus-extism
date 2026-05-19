@@ -6,7 +6,8 @@ use dioxus_extism_protocol::{
     ViewElement, PROTOCOL_VERSION,
 };
 
-use crate::server_fns::{get_override_map, get_slot_content};
+
+use crate::server_fns::{get_component_resolution, get_override_map, get_slot_content};
 use crate::session::use_session_id;
 
 // ── HostComponentRegistry ────────────────────────────────────────────────────
@@ -115,6 +116,76 @@ pub fn PluginSlot(
             }
         }
         _ => fallback.unwrap_or(rsx! {}),
+    }
+}
+
+// ── OverridableComponent ──────────────────────────────────────────────────────
+
+/// Wraps a Dioxus component to allow plugin transforms.
+///
+/// Fast path: if the `OverrideMap` (provided by `PluginBootProvider`) does not list
+/// `name` in `overridden_components`, `fallback` renders immediately with zero network
+/// overhead. No `use_resource` call and no server function invocation occur.
+#[component]
+pub fn OverridableComponent(
+    name: String,
+    props: serde_json::Value,
+    fallback: Element,
+) -> Element {
+    let override_map: Signal<OverrideMap> = use_context::<Signal<OverrideMap>>();
+    if !override_map.read().overridden_components.contains(&name) {
+        return fallback;
+    }
+    rsx! {
+        OverridableComponentInner { name, props, fallback }
+    }
+}
+
+/// Inner half of `OverridableComponent` that issues the server call.
+///
+/// This is a separate component so that `use_resource` is always called in the same
+/// hook position — calling it conditionally in the outer component would violate the
+/// Dioxus hook ordering rules.
+#[component]
+fn OverridableComponentInner(
+    name: String,
+    props: serde_json::Value,
+    fallback: Element,
+) -> Element {
+    let session_id = use_session_id();
+    let client_caps = use_context::<ClientCapabilities>();
+
+    let name_clone = name.clone();
+    let props_clone = props.clone();
+    let resolution = use_resource(move || {
+        let n = name_clone.clone();
+        let p = props_clone.clone();
+        let sid: SessionId = session_id.read().clone();
+        let caps = client_caps.clone();
+        async move { get_component_resolution(n, p, sid, caps).await }
+    });
+
+    match resolution.read().as_ref() {
+        None | Some(Err(_)) | Some(Ok(None)) => fallback.clone(),
+        Some(Ok(Some(r))) => {
+            let before = r.before.clone();
+            let replacement = r.replacement.clone();
+            let after = r.after.clone();
+            let fallback = fallback.clone();
+            rsx! {
+                for (i, view) in before.into_iter().enumerate() {
+                    PluginViewRenderer { key: "{i}-b", view, session_id }
+                }
+                if let Some(repl) = replacement {
+                    PluginViewRenderer { view: repl, session_id }
+                } else {
+                    {fallback}
+                }
+                for (i, view) in after.into_iter().enumerate() {
+                    PluginViewRenderer { key: "{i}-a", view, session_id }
+                }
+            }
+        }
     }
 }
 

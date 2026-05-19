@@ -3,7 +3,7 @@ mod server_fns;
 mod session;
 
 pub use components::{
-    HostComponentRegistry, PluginBootProvider, PluginSlot, PluginViewRenderer,
+    HostComponentRegistry, OverridableComponent, PluginBootProvider, PluginSlot, PluginViewRenderer,
 };
 pub use session::{DesktopSessionProvider, SessionProviderRoot, WebSessionProvider};
 

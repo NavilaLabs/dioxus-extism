@@ -10,9 +10,10 @@ use std::{
 
 use async_trait::async_trait;
 use dioxus_extism_protocol::{
-    ClientCapabilities, HandlerId, HookCall, HookResult, HostCapability, OverrideMap, PluginEvent,
-    PluginId, PluginManifest, PluginView, PriorityHint, SessionCtx, SessionId, SlotContent,
-    ViewUpdate, PROTOCOL_VERSION,
+    ClientCapabilities, ComponentResolution, HandlerId, HookCall, HookResult, HostCapability,
+    OverrideMap, PluginEvent, PluginId, PluginManifest, PluginView, PriorityHint, RoutePattern,
+    SessionCtx, SessionId, SlotContent, TransformContext, TransformInput, TransformOp,
+    TransformOutput, ViewUpdate, PROTOCOL_VERSION,
 };
 use extism::convert::Json;
 use futures::future::BoxFuture;
@@ -85,7 +86,89 @@ pub(crate) struct LoadedPlugin {
 
 pub(crate) struct SlotRegistry(pub(crate) HashMap<String, Vec<(i32, PluginId)>>);
 pub(crate) struct HookRegistry(pub(crate) HashMap<String, Vec<(i32, PluginId)>>);
-pub(crate) struct TransformRegistry;
+
+/// A resolved transform entry, ready for render-time dispatch.
+#[derive(Debug, Clone)]
+pub struct TransformEntry {
+    pub plugin_id: PluginId,
+    /// Plugin export name to call at render time.
+    pub transform_fn: String,
+    pub op: TransformOp,
+    /// Resolved priority (higher = called first).
+    pub priority: i32,
+}
+
+/// Indexes resolved `TransformEntry` values by selector type for efficient render-time lookup.
+#[derive(Debug, Default)]
+pub struct TransformRegistry {
+    components: HashMap<String, Vec<TransformEntry>>,
+    slots: HashMap<String, Vec<TransformEntry>>,
+    data_slots: HashMap<String, Vec<TransformEntry>>,
+    routes: Vec<(RoutePattern, TransformEntry)>,
+}
+
+impl TransformRegistry {
+    /// Register a component transform, maintaining priority-descending order.
+    pub fn insert_component(&mut self, name: impl Into<String>, entry: TransformEntry) {
+        let v = self.components.entry(name.into()).or_default();
+        v.push(entry);
+        v.sort_by(|a, b| b.priority.cmp(&a.priority));
+    }
+
+    /// Register a slot transform, maintaining priority-descending order.
+    pub fn insert_slot(&mut self, name: impl Into<String>, entry: TransformEntry) {
+        let v = self.slots.entry(name.into()).or_default();
+        v.push(entry);
+        v.sort_by(|a, b| b.priority.cmp(&a.priority));
+    }
+
+    /// Register a data-plugin-slot transform, maintaining priority-descending order.
+    pub fn insert_data_slot(&mut self, name: impl Into<String>, entry: TransformEntry) {
+        let v = self.data_slots.entry(name.into()).or_default();
+        v.push(entry);
+        v.sort_by(|a, b| b.priority.cmp(&a.priority));
+    }
+
+    /// Register a route transform, maintaining priority-descending order.
+    pub fn insert_route(&mut self, pattern: RoutePattern, entry: TransformEntry) {
+        self.routes.push((pattern, entry));
+        self.routes.sort_by(|a, b| b.1.priority.cmp(&a.1.priority));
+    }
+
+    /// Returns component transforms in priority-descending order, or empty if none.
+    pub fn for_component(&self, name: &str) -> Vec<TransformEntry> {
+        self.components.get(name).cloned().unwrap_or_default()
+    }
+
+    /// Returns slot transforms in priority-descending order, or empty if none.
+    pub fn for_slot(&self, name: &str) -> Vec<TransformEntry> {
+        self.slots.get(name).cloned().unwrap_or_default()
+    }
+
+    /// Returns data-plugin-slot transforms in priority-descending order, or empty if none.
+    pub fn for_data_slot(&self, name: &str) -> Vec<TransformEntry> {
+        self.data_slots.get(name).cloned().unwrap_or_default()
+    }
+
+    /// Returns all route transforms whose pattern matches `path`, in priority-descending order.
+    pub fn for_route(&self, path: &str) -> Vec<TransformEntry> {
+        self.routes
+            .iter()
+            .filter(|(pat, _)| pat.matches(path))
+            .map(|(_, e)| e.clone())
+            .collect()
+    }
+
+    /// All component names that have at least one registered transform.
+    pub fn all_component_names(&self) -> HashSet<&str> {
+        self.components.keys().map(String::as_str).collect()
+    }
+
+    /// All slot names that have at least one registered transform.
+    pub fn all_slot_names(&self) -> HashSet<&str> {
+        self.slots.keys().map(String::as_str).collect()
+    }
+}
 
 pub(crate) struct Registries {
     pub(crate) slots: SlotRegistry,
@@ -430,9 +513,84 @@ impl PluginRuntime {
         Ok(())
     }
 
+    /// Resolve all registered transforms for `component_name`, returning `None` if none are
+    /// registered, or `Some(ComponentResolution)` otherwise (with per-plugin error isolation).
+    pub async fn resolve_component(
+        &self,
+        component_name: &str,
+        props: serde_json::Value,
+        session: &SessionCtx,
+    ) -> Result<Option<ComponentResolution>, PluginRuntimeError> {
+        let entries = {
+            let regs = self.registries.read().await;
+            regs.transforms.for_component(component_name)
+        };
+        if entries.is_empty() {
+            return Ok(None);
+        }
+
+        let mut before = vec![];
+        let mut replacement = None;
+        let mut after = vec![];
+
+        for entry in entries {
+            let pool = {
+                let plugins = self.plugins.read().await;
+                match plugins.get(&entry.plugin_id) {
+                    Some(p)
+                        if p.enabled.load(Ordering::Relaxed)
+                            && self.is_compatible(p, &session.client) =>
+                    {
+                        p.pool.clone()
+                    }
+                    _ => continue,
+                }
+            };
+
+            let context = TransformContext {
+                component_props: Some(props.clone()),
+                client: session.client.clone(),
+                ..Default::default()
+            };
+            let input = TransformInput { original: None, context, session: session.clone() };
+
+            match call_export::<TransformInput, TransformOutput>(
+                pool,
+                entry.transform_fn.clone(),
+                input,
+                session.clone(),
+            )
+            .await
+            {
+                Ok(output) => match entry.op {
+                    TransformOp::InjectBefore => before.push(output.view),
+                    TransformOp::InjectAfter => after.push(output.view),
+                    TransformOp::WrapNode | TransformOp::Replace => {
+                        replacement = Some(output.view);
+                    }
+                    _ => {}
+                },
+                Err(e) => {
+                    tracing::warn!(
+                        plugin = %entry.plugin_id.0,
+                        component = component_name,
+                        error = %e,
+                        "transform call failed, skipping"
+                    );
+                }
+            }
+        }
+
+        Ok(Some(ComponentResolution { before, replacement, after }))
+    }
+
+    fn is_compatible(&self, plugin: &LoadedPlugin, client: &ClientCapabilities) -> bool {
+        plugin.manifest.min_protocol_version <= client.protocol_version
+            && plugin.manifest.min_app_version <= client.app_version
+    }
+
     pub(crate) fn build_registries(plugins: &IndexMap<PluginId, LoadedPlugin>) -> Registries {
-        use dioxus_extism_protocol::{PluginClientRequirement, RoutePattern, Selector};
-        use std::collections::{HashMap, HashSet};
+        use dioxus_extism_protocol::{PluginClientRequirement, Selector};
 
         let mut slots: HashMap<String, Vec<(i32, PluginId)>> = HashMap::new();
         let mut hooks: HashMap<String, Vec<(i32, PluginId)>> = HashMap::new();
@@ -442,6 +600,7 @@ impl PluginRuntime {
         let mut required_protocol_version: u32 = 0;
         let mut required_app_version: u32 = 0;
         let mut plugin_requirements: HashMap<PluginId, PluginClientRequirement> = HashMap::new();
+        let mut transforms = TransformRegistry::default();
 
         for (id, loaded) in plugins {
             let manifest = &loaded.manifest;
@@ -462,15 +621,29 @@ impl PluginRuntime {
                     .push((priority, id.clone()));
             }
             for transform in &manifest.transforms {
+                let priority =
+                    loaded.config.resolve(&transform.transform_fn, &transform.priority_hint);
+                let entry = TransformEntry {
+                    plugin_id: id.clone(),
+                    transform_fn: transform.transform_fn.clone(),
+                    op: transform.op.clone(),
+                    priority,
+                };
                 match &transform.selector {
                     Selector::Component(name) => {
                         overridden_components.insert(name.clone());
+                        transforms.insert_component(name.clone(), entry);
                     }
                     Selector::Slot(name) => {
                         transformed_slots.insert(name.clone());
+                        transforms.insert_slot(name.clone(), entry);
+                    }
+                    Selector::DataPluginSlot(name) => {
+                        transforms.insert_data_slot(name.clone(), entry);
                     }
                     Selector::Route(pattern) => {
                         route_patterns.push(pattern.clone());
+                        transforms.insert_route(pattern.clone(), entry);
                     }
                     _ => {}
                 }
@@ -500,7 +673,7 @@ impl PluginRuntime {
         Registries {
             slots: SlotRegistry(slots),
             hooks: HookRegistry(hooks),
-            transforms: TransformRegistry,
+            transforms,
             override_map: OverrideMap {
                 version: 0,
                 overridden_components,

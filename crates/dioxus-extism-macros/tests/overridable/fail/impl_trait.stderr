@@ -1,0 +1,15 @@
+error: Parameter `items: impl Trait` cannot be used with #[overridable]. Use a concrete type or wrap in a serialisable struct.
+ --> tests/overridable/fail/impl_trait.rs:4:1
+  |
+4 | #[overridable]
+  | ^^^^^^^^^^^^^^
+  |
+  = note: this error originates in the attribute macro `overridable` (in Nightly builds, run with -Z macro-backtrace for more info)
+
+warning: unused import: `dioxus::prelude::*`
+ --> tests/overridable/fail/impl_trait.rs:1:5
+  |
+1 | use dioxus::prelude::*;
+  |     ^^^^^^^^^^^^^^^^^^
+  |
+  = note: `#[warn(unused_imports)]` (part of `#[warn(unused)]`) on by default

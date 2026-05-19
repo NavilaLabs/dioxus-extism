@@ -251,9 +251,18 @@ use dioxus::prelude::*;
 
 #[server]
 async fn my_fn(arg: String) -> Result<MyOutput, ServerFnError> {
-    // Extract Axum state:
-    let State(runtime) = extract::<State<Arc<PluginRuntime>>>().await
-        .map_err(|e| ServerFnError::new(e.to_string()))?;
+    // Extract an Axum Extension from the request context.
+    // The Extension must be added by the host via PluginRuntimeExt::with_plugin_runtime
+    // (which calls .layer(axum::Extension(runtime)) on the Axum router).
+    //
+    // NOTE: `extract` is NOT a standalone function in dioxus::prelude.
+    // Use FullstackContext::extract() instead:
+    use axum::extract::Extension;
+    use dioxus_extism_host::PluginRuntime;
+    let Extension(runtime): Extension<Arc<PluginRuntime>> =
+        dioxus::fullstack::FullstackContext::extract()
+            .await
+            .map_err(|e| ServerFnError::new(e.to_string()))?;
     Ok(/* ... */)
 }
 ```
