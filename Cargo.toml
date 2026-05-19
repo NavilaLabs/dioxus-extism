@@ -1,0 +1,17 @@
+[package]
+name = "rust-lib"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+
+[workspace.lints.clippy]
+# Enforce correctness and best practices
+all = { level = "deny" }
+correctness = { level = "deny" }
+complexity = { level = "deny" }
+perf = { level = "deny" }
+style = { level = "deny" }
+# Strict: pedantic + nursery for consistency and future-proofing
+pedantic = { level = "warn" }
+nursery = { level = "warn" }
