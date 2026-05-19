@@ -4,6 +4,7 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
+anyhow                 = { workspace = true }
 extism                 = { workspace = true }
 dioxus-extism-protocol = { path = "../dioxus-extism-protocol" }
 tokio                  = { workspace = true }
@@ -14,6 +15,7 @@ indexmap               = { workspace = true }
 axum                   = { workspace = true }
 tracing                = { workspace = true }
 sha2                   = { workspace = true }
+reqwest                = { workspace = true }
 async-trait            = { workspace = true }
 futures                = { workspace = true }
 

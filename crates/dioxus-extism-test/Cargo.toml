@@ -8,6 +8,7 @@ dioxus-extism-host     = { path = "../dioxus-extism-host" }
 dioxus-extism-pdk      = { path = "../dioxus-extism-pdk" }
 dioxus-extism-protocol = { path = "../dioxus-extism-protocol" }
 tokio                  = { workspace = true }
+serde                  = { workspace = true }
 serde_json             = { workspace = true }
 
 [lints]

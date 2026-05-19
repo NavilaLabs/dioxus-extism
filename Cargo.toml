@@ -13,6 +13,7 @@ members = [
 resolver = "2"
 
 [workspace.dependencies]
+anyhow        = "1"
 extism        = "1.21"
 extism-pdk    = "1.4"
 dioxus        = { version = "0.7", features = ["fullstack"] }

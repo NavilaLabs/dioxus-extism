@@ -15,6 +15,7 @@ any code. Task files for each phase are in `tasks/`.
 
 ```toml
 [workspace.dependencies]
+anyhow        = "1"
 extism        = "1.21"
 extism-pdk    = "1.4"
 dioxus        = { version = "0.7", features = ["fullstack"] }

@@ -7,6 +7,6 @@ mod runtime;
 
 pub use error::{InvocationError, PersistenceError, PluginRuntimeError};
 pub use runtime::{
-    GlobalStateMap, PluginInstallConfig, PluginRuntime, PluginRuntimeBuilder, PluginRuntimeExt,
-    PluginSource, SessionStateMap, StatePersistenceProvider,
+    GlobalStateMap, HookOutcome, PluginInstallConfig, PluginRuntime, PluginRuntimeBuilder,
+    PluginRuntimeExt, PluginSource, SessionStateMap, StatePersistenceProvider,
 };

@@ -37,8 +37,9 @@ let wasm = Wasm::url("https://example.com/p.wasm");   // from URL
 
 let manifest = Manifest::new([wasm]);
 
+// VERIFIED: method is with_functions, NOT with_host_functions
 let plugin = PluginBuilder::new(manifest)
-    .with_host_functions([fn1, fn2])    // Vec<Function>
+    .with_functions([fn1, fn2])         // Vec<Function> or IntoIterator<Item=Function>
     .build()?;                          // -> Result<Plugin, extism::Error>
 ```
 
@@ -65,6 +66,7 @@ let pool = Pool::new_from_builder(
 );
 
 // Get a plugin instance — returns Option<PoolPlugin> (None = timed out):
+// VERIFIED: Pool::get takes Duration (not two args)
 let maybe_plugin: Option<extism::PoolPlugin> =
     pool.get(std::time::Duration::from_millis(5000))?;
 let mut plugin = maybe_plugin.ok_or(PluginRuntimeError::Pool("timeout".into()))?;
@@ -75,6 +77,9 @@ let result: Json<MyOutput> = plugin.call("export_name", Json(&my_input))?;
 let value: MyOutput = result.0;
 
 // plugin is automatically returned to the pool on Drop
+
+// VERIFIED: Pool also has function_exists(name, timeout) -> Result<bool, Error>
+let exists: bool = pool.function_exists("on_load", Duration::from_millis(1000))?;
 ```
 
 **IMPORTANT (Phase 2):** `PoolBuilder::new_with_count` and `Pool::new_from_compiled_with_count`
