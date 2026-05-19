@@ -44,32 +44,42 @@ let plugin = PluginBuilder::new(manifest)
 
 ### Pool construction (use this instead of Arc<Mutex<Plugin>>)
 
+**VERIFIED against extism 1.21.0 source.** API_NOTES previously had incorrect Pool API.
+
 ```rust
-use extism::{Pool, PoolBuilder};
+use extism::{Pool, PoolBuilder, PluginBuilder, Manifest};
 
-// Build a Pool from a pre-built Plugin or from a Manifest:
-let pool = PoolBuilder::new_with_count(manifest, pool_size)?;
-// or from a CompiledPlugin for faster instance creation:
-let compiled = CompiledPlugin::new(manifest)?;
-let pool = PoolBuilder::new_from_compiled_with_count(compiled, pool_size)?;
+// Pool::new takes a factory closure that builds Plugin instances on demand.
+// The pool holds max N instances and creates more as needed up to that limit.
+let pool = Pool::new(move || {
+    PluginBuilder::new(manifest.clone())
+        .with_wasi(true)
+        .with_host_functions(host_fns.clone())
+        .build()
+});
 
-// Attach host functions:
-// NOTE: verify exact PoolBuilder API — method names may differ from PluginBuilder.
-// Check docs.rs/extism/latest/extism/struct.PoolBuilder.html for current API.
+// To set max instances, use Pool::new_from_builder:
+let pool = Pool::new_from_builder(
+    move || PluginBuilder::new(manifest.clone()).build(),
+    PoolBuilder::default().with_max_instances(pool_size),
+);
 
-// Get a plugin instance (blocks until available):
-let mut plugin: extism::PoolPlugin = pool.get()?;
+// Get a plugin instance — returns Option<PoolPlugin> (None = timed out):
+let maybe_plugin: Option<extism::PoolPlugin> =
+    pool.get(std::time::Duration::from_millis(5000))?;
+let mut plugin = maybe_plugin.ok_or(PluginRuntimeError::Pool("timeout".into()))?;
 
 // Call an export (PoolPlugin has same call() interface as Plugin):
-let result: extism::convert::Json<MyOutput> =
-    plugin.call("export_name", extism::convert::Json(my_input))?;
+use extism::convert::Json;
+let result: Json<MyOutput> = plugin.call("export_name", Json(&my_input))?;
+let value: MyOutput = result.0;
 
 // plugin is automatically returned to the pool on Drop
 ```
 
-**IMPORTANT:** Verify the exact `PoolBuilder` method signatures before implementing.
-The API may require host functions to be passed differently than `PluginBuilder`.
-Check: https://docs.rs/extism/latest/extism/struct.PoolBuilder.html
+**IMPORTANT (Phase 2):** `PoolBuilder::new_with_count` and `Pool::new_from_compiled_with_count`
+do NOT exist in extism 1.21.0. There is also no `CompiledPlugin` type in the public API.
+Use `Pool::new` or `Pool::new_from_builder` with a factory closure.
 
 ### Plugin call
 
@@ -89,44 +99,56 @@ let exists: bool = plugin.function_exists("on_load");
 
 ### Host functions
 
-```rust
-use extism::{Function, CurrentPlugin, Val, ValType, UserData};
+**VERIFIED against extism 1.21.0 source.** The API_NOTES previously had several errors.
 
-// UserData<T> is an enum in Extism 1.x — T must be: Clone + Send + Sync + 'static
+```rust
+use extism::{Function, CurrentPlugin, Val, ValType, UserData, PTR};
+//                                                               ^^^
+// PTR is a module-level constant: pub const PTR: ValType = ValType::I64
+// NOT extism::ValType::PTR — that variant does not exist.
+
 #[derive(Clone)]
 struct CallCtx { /* ... */ }
 
-let user_data = UserData::new(ctx);  // wraps ctx in UserData::T(Arc<Mutex<ctx>>)
+let user_data = UserData::new(ctx);  // wraps in UserData::Rust(Arc<Mutex<ctx>>)
 
 let my_fn = Function::new(
     "function_name_as_seen_by_plugin",
-    [ValType::PTR],           // input types  (PTR = pointer/len pair for strings)
-    [ValType::PTR],           // output types
+    [extism::PTR],            // input types  (PTR = I64 pointer into WASM memory)
+    [extism::PTR],            // output types
     user_data,
     |plugin: &mut CurrentPlugin,
      inputs: &[Val],
      outputs: &mut [Val],
-     user_data: UserData<CallCtx>| {
-        // Extract context:
-        let ctx = match &user_data {
-            UserData::T(inner) => inner.lock().unwrap(),
-            _ => return,
-        };
+     user_data: UserData<CallCtx>| -> Result<(), extism::Error> {
+        //                                  ^^^^^^^^^^^^^^^^^^^
+        // Closure MUST return Result<(), extism::Error>.
+        // extism::Error is anyhow::Error (re-exported as pub use anyhow::Error).
+
+        // Extract context — UserData variants are Rust and C, NOT T:
+        let arc = user_data.get()?;        // -> Arc<Mutex<CallCtx>>
+        let ctx = arc.lock().unwrap();
 
         // Read string input from WASM memory:
-        let input: &str = plugin.input().expect("valid input");
-        // or for raw bytes: plugin.input_bytes()
+        let key: String = plugin.memory_get_val(&inputs[0])?;
+        // or: let bytes: Vec<u8> = plugin.memory_get_val(&inputs[0])?;
 
-        // Write string output:
-        plugin.output("result string").expect("output written");
-        // or for bytes: plugin.output_bytes(bytes.as_slice())
+        // Write output to WASM memory:
+        let result = "some value";
+        let handle = plugin.memory_new(result)?;
+        outputs[0] = plugin.memory_to_val(handle);
+        Ok(())
     },
 );
 ```
 
-**Verify:** `CurrentPlugin::input()` and `CurrentPlugin::output()` method names — they
-may be `plugin.input::<T>()` / `plugin.output(value)` using the convert traits.
-Check: https://docs.rs/extism/latest/extism/struct.CurrentPlugin.html
+`CurrentPlugin` memory API (verified):
+- `memory_get_val<T: FromBytes<'_>>(&mut self, offs: &Val) -> Result<T, Error>` — read T
+- `memory_new<T: ToBytes<'_>>(&mut self, t: T) -> Result<MemoryHandle, Error>` — write T
+- `memory_to_val(&mut self, handle: MemoryHandle) -> Val` — handle → Val for outputs
+- `memory_from_val(&mut self, offs: &Val) -> Option<MemoryHandle>` — Val → handle
+
+There are NO `input()` or `output()` methods on CurrentPlugin.
 
 ### Resource limits
 

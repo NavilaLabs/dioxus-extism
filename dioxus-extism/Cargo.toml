@@ -1,0 +1,20 @@
+[package]
+name = "dioxus-extism"
+version = "0.1.0"
+edition = "2024"
+
+[features]
+host     = ["dep:dioxus-extism-host"]
+frontend = ["dep:dioxus-extism-frontend"]
+pdk      = ["dep:dioxus-extism-pdk"]
+test     = ["dep:dioxus-extism-test"]
+
+[dependencies]
+dioxus-extism-protocol = { path = "../crates/dioxus-extism-protocol" }
+dioxus-extism-host     = { path = "../crates/dioxus-extism-host", optional = true }
+dioxus-extism-frontend = { path = "../crates/dioxus-extism-frontend", optional = true }
+dioxus-extism-pdk      = { path = "../crates/dioxus-extism-pdk", optional = true }
+dioxus-extism-test     = { path = "../crates/dioxus-extism-test", optional = true }
+
+[lints]
+workspace = true

@@ -1,17 +1,48 @@
-[package]
-name = "dioxus-extism"
-version = "0.1.0"
-edition = "2024"
+[workspace]
+members = [
+    "crates/dioxus-extism-protocol",
+    "crates/dioxus-extism-macros",
+    "crates/dioxus-extism-host",
+    "crates/dioxus-extism-pdk",
+    "crates/dioxus-extism-frontend",
+    "crates/dioxus-extism-test",
+    "dioxus-extism",
+    "examples/hello-plugin/plugin",
+    "examples/hello-plugin/host",
+]
+resolver = "2"
 
-[dependencies]
+[workspace.dependencies]
+extism        = "1.21"
+extism-pdk    = "1.4"
+dioxus        = { version = "0.7", features = ["fullstack"] }
+dioxus-ssr    = "0.7"
+axum          = "0.8"
+tokio         = { version = "1", features = ["full"] }
+serde         = { version = "1", features = ["derive"] }
+serde_json    = "1"
+thiserror     = "2"
+indexmap      = { version = "2", features = ["serde"] }
+async-trait   = "0.1"
+uuid          = { version = "1", features = ["v4"] }
+sha2          = "0.10"
+futures       = "0.3"
+tracing       = "0.1"
+syn           = { version = "2", features = ["full"] }
+quote         = "1"
+proc-macro2   = "1"
+reqwest       = { version = "0.12", features = ["json"] }
+dirs          = "5"
+keyring       = "3"
+fd-lock       = "4"
+trybuild      = "1"
+async-stream  = "0.3"
 
 [workspace.lints.clippy]
-# Enforce correctness and best practices
-all = { level = "deny" }
+all         = { level = "deny" }
 correctness = { level = "deny" }
-complexity = { level = "deny" }
-perf = { level = "deny" }
-style = { level = "deny" }
-# Strict: pedantic + nursery for consistency and future-proofing
-pedantic = { level = "warn" }
-nursery = { level = "warn" }
+complexity  = { level = "deny" }
+perf        = { level = "deny" }
+style       = { level = "deny" }
+pedantic    = { level = "warn" }
+nursery     = { level = "warn" }

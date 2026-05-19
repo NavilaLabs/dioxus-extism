@@ -1,0 +1,20 @@
+[package]
+name = "hello-plugin-host"
+version = "0.1.0"
+edition = "2024"
+
+[features]
+default = ["web", "server"]
+web    = ["dioxus/web", "dioxus-extism-frontend/web"]
+server = ["dioxus/server", "dioxus-extism-frontend/server"]
+
+[dependencies]
+dioxus-extism-host     = { path = "../../../crates/dioxus-extism-host" }
+dioxus-extism-frontend = { path = "../../../crates/dioxus-extism-frontend" }
+dioxus-extism-protocol = { path = "../../../crates/dioxus-extism-protocol" }
+dioxus                 = { workspace = true }
+tokio                  = { workspace = true }
+tracing                = { workspace = true }
+
+[lints]
+workspace = true

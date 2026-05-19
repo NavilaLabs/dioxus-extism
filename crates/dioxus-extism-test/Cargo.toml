@@ -1,0 +1,14 @@
+[package]
+name = "dioxus-extism-test"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+dioxus-extism-host     = { path = "../dioxus-extism-host" }
+dioxus-extism-pdk      = { path = "../dioxus-extism-pdk" }
+dioxus-extism-protocol = { path = "../dioxus-extism-protocol" }
+tokio                  = { workspace = true }
+serde_json             = { workspace = true }
+
+[lints]
+workspace = true

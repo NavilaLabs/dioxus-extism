@@ -1,0 +1,12 @@
+[package]
+name = "dioxus-extism-protocol"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+serde      = { workspace = true }
+serde_json = { workspace = true }
+indexmap   = { workspace = true }
+
+[lints]
+workspace = true
