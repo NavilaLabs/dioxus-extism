@@ -10,7 +10,7 @@ pub const PROTOCOL_VERSION: u32 = 1;
 // ── Core identifiers ────────────────────────────────────────────────────────
 
 /// `"org/plugin-name"` — globally unique plugin identifier.
-#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize, Default)]
 pub struct PluginId(pub String);
 
 /// Opaque handler reference embedded in a `PluginView` event handler.
@@ -27,11 +27,13 @@ pub struct RoutePattern(pub String);
 
 impl RoutePattern {
     /// Returns `true` if `path` matches this pattern.
+    #[must_use]
     pub fn matches(&self, path: &str) -> bool {
         self.extract_params(path).is_some()
     }
 
     /// Extracts named parameters from `path` if it matches, or `None`.
+    #[must_use]
     pub fn extract_params(&self, path: &str) -> Option<HashMap<String, String>> {
         let pattern_segs: Vec<&str> = self.0.split('/').collect();
         let path_segs: Vec<&str> = path.split('/').collect();
@@ -107,7 +109,8 @@ pub enum PriorityHint {
 
 impl PriorityHint {
     /// Maps the hint to a numeric bucket used for ordering.
-    pub fn as_numeric(&self) -> i32 {
+    #[must_use]
+    pub const fn as_numeric(&self) -> i32 {
         match self {
             Self::First => 1000,
             Self::High => 750,
@@ -137,12 +140,6 @@ pub struct PluginManifest {
     pub event_subscriptions: Vec<String>,
     pub transforms: Vec<TransformDeclaration>,
     pub host_capabilities: Vec<HostCapability>,
-}
-
-impl Default for PluginId {
-    fn default() -> Self {
-        Self(String::new())
-    }
 }
 
 /// State scope declared by a plugin in its manifest.
@@ -198,11 +195,11 @@ pub enum Selector {
     Route(RoutePattern),
     // Layer 3
     Within {
-        outer: Box<Selector>,
+        outer: Box<Self>,
         inner: NodeSelector,
     },
     // Composition
-    Any(Vec<Selector>),
+    Any(Vec<Self>),
 }
 
 /// Selects specific nodes within a `PluginView` tree.
@@ -217,10 +214,10 @@ pub enum NodeSelector {
     First,
     Last,
     Index(usize),
-    And(Box<NodeSelector>, Box<NodeSelector>),
-    Or(Box<NodeSelector>, Box<NodeSelector>),
+    And(Box<Self>, Box<Self>),
+    Or(Box<Self>, Box<Self>),
     /// Apply inner selector recursively at any depth.
-    Recursive(Box<NodeSelector>),
+    Recursive(Box<Self>),
 }
 
 // ── Transform types ──────────────────────────────────────────────────────────
@@ -277,26 +274,21 @@ pub struct TransformOutput {
 // ── PluginView — the UI description tree ────────────────────────────────────
 
 /// A serialisable virtual UI tree returned by plugin exports.
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
 #[non_exhaustive]
 pub enum PluginView {
     Element(ViewElement),
     Text(String),
     /// Render a named host component with forwarded props.
     HostComponent(HostComponentRef),
-    Fragment(Vec<PluginView>),
+    Fragment(Vec<Self>),
+    #[default]
     Empty,
     /// Served when a plugin's version requirements exceed the client's capabilities.
     Incompatible {
         reason: String,
-        fallback: Option<Box<PluginView>>,
+        fallback: Option<Box<Self>>,
     },
-}
-
-impl Default for PluginView {
-    fn default() -> Self {
-        Self::Empty
-    }
 }
 
 /// A virtual element node in a `PluginView` tree.
@@ -484,6 +476,37 @@ pub struct ComponentResolution {
     pub replacement: Option<PluginView>,
     /// Views injected after the component's own output.
     pub after: Vec<PluginView>,
+}
+
+/// Route transforms resolved for the current path.
+///
+/// Returned by `PluginRuntime::render_route_transforms` and used as the server
+/// function return type so it is available on `wasm32-unknown-unknown`.
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct RouteTransforms {
+    pub before: Vec<PluginView>,
+    pub wrap: Option<PluginView>,
+    pub after: Vec<PluginView>,
+}
+
+impl RouteTransforms {
+    /// Returns an empty `RouteTransforms` with no contributions.
+    #[must_use]
+    pub fn empty() -> Self {
+        Self::default()
+    }
+
+    /// Returns `true` if all three partitions are empty.
+    #[must_use]
+    pub const fn is_empty(&self) -> bool {
+        self.before.is_empty() && self.wrap.is_none() && self.after.is_empty()
+    }
+
+    /// Returns `true` if a Wrap transform was resolved for this path.
+    #[must_use]
+    pub const fn has_wrap(&self) -> bool {
+        self.wrap.is_some()
+    }
 }
 
 /// SSR equivalent of `ComponentResolution`.

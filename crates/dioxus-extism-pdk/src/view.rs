@@ -58,6 +58,7 @@ impl ViewBuilder {
     }
 
     /// Finalise into a `PluginView::Element`.
+    #[must_use] 
     pub fn build(self) -> PluginView {
         PluginView::Element(self.0)
     }
@@ -69,10 +70,12 @@ pub fn element(tag: impl Into<String>) -> ViewBuilder {
     ViewBuilder::new(tag)
 }
 
+#[must_use] 
 pub fn div() -> ViewBuilder {
     ViewBuilder::new("div")
 }
 
+#[must_use] 
 pub fn span() -> ViewBuilder {
     ViewBuilder::new("span")
 }
@@ -91,6 +94,7 @@ pub fn incompatible(reason: impl Into<String>) -> PluginView {
 
 /// Returns a `HostComponent("__content__")` placeholder — used inside Wrap transforms
 /// to reference the original content.
+#[must_use] 
 pub fn original_content() -> PluginView {
     PluginView::HostComponent(HostComponentRef {
         name: "__content__".into(),

@@ -9,6 +9,8 @@ members = [
     "dioxus-extism",
     "examples/hello-plugin/plugin",
     "examples/hello-plugin/host",
+    "examples/route-injection-example/plugin",
+    "examples/route-injection-example/host",
 ]
 resolver = "2"
 

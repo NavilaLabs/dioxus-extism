@@ -4,20 +4,26 @@ version = "0.1.0"
 edition = "2024"
 
 [features]
-default = ["web", "server"]
+default = ["web"]
 web    = ["dioxus/web"]
-server = ["dioxus/server", "dep:dioxus-extism-host", "dep:axum"]
+server = ["dioxus/server"]
 
 [dependencies]
-dioxus                 = { workspace = true }
+dioxus                 = { workspace = true, features = ["router"] }
 dioxus-extism-protocol = { path = "../dioxus-extism-protocol" }
 dioxus-extism-macros   = { path = "../dioxus-extism-macros" }
-dioxus-extism-host     = { path = "../dioxus-extism-host", optional = true }
-axum                   = { workspace = true, optional = true }
 serde                  = { workspace = true }
 serde_json             = { workspace = true }
 tracing                = { workspace = true }
 uuid                   = { workspace = true }
+
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+dioxus-extism-host = { path = "../dioxus-extism-host" }
+axum               = { workspace = true }
+
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+web-sys = { version = "0.3", features = ["Window", "Location"] }
+uuid    = { version = "1", features = ["v4", "js"] }
 
 [lints]
 workspace = true

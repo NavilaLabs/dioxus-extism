@@ -15,11 +15,11 @@ pub fn SessionProviderRoot<P: 'static + Clone + PartialEq>(
 }
 
 /// Session provider for web (WASM) targets — persists session ID in `localStorage`.
-#[derive(Clone, PartialEq)]
+#[derive(Clone, PartialEq, Eq)]
 pub struct WebSessionProvider;
 
 /// Session provider for desktop targets — persists session ID on the filesystem.
-#[derive(Clone, PartialEq)]
+#[derive(Clone, PartialEq, Eq)]
 pub struct DesktopSessionProvider;
 
 /// Read the current `SessionId` from context.

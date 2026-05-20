@@ -963,6 +963,7 @@ dependencies = [
  "dioxus-html",
  "dioxus-liveview",
  "dioxus-logger",
+ "dioxus-router",
  "dioxus-server",
  "dioxus-signals",
  "dioxus-ssr",
@@ -1135,6 +1136,7 @@ dependencies = [
  "serde_json",
  "tracing",
  "uuid",
+ "web-sys",
 ]
 
 [[package]]
@@ -3730,6 +3732,28 @@ checksum = "72f81bee8c8ef9b577d1681a70ebbc962c232461e397b22c208c43c04b67a155"
 dependencies = [
  "rmp",
  "serde",
+]
+
+[[package]]
+name = "route-injection-example-host"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "axum",
+ "dioxus",
+ "dioxus-extism-frontend",
+ "dioxus-extism-host",
+ "dioxus-extism-protocol",
+ "tokio",
+ "tracing",
+]
+
+[[package]]
+name = "route-injection-example-plugin"
+version = "0.1.0"
+dependencies = [
+ "dioxus-extism-pdk",
+ "extism-pdk",
 ]
 
 [[package]]

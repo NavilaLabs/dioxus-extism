@@ -42,6 +42,7 @@ impl Default for MockSession {
 
 impl MockSession {
     /// Create a session with default test values.
+    #[must_use] 
     pub fn new() -> Self {
         Self::default()
     }
@@ -62,14 +63,14 @@ impl MockSession {
 
     /// Override the reported protocol version.
     #[must_use]
-    pub fn with_protocol_version(mut self, v: u32) -> Self {
+    pub const fn with_protocol_version(mut self, v: u32) -> Self {
         self.protocol_version = v;
         self
     }
 
     /// Override the reported app version.
     #[must_use]
-    pub fn with_app_version(mut self, v: u32) -> Self {
+    pub const fn with_app_version(mut self, v: u32) -> Self {
         self.app_version = v;
         self
     }
@@ -82,6 +83,7 @@ impl MockSession {
     }
 
     /// Convert to `SessionCtx` for use in runtime calls.
+    #[must_use] 
     pub fn as_ctx(&self) -> SessionCtx {
         SessionCtx {
             session_id: self.session_id.clone(),
@@ -112,6 +114,10 @@ impl TestRuntime {
     /// # Errors
     ///
     /// Returns an error if any plugin fails to load.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the tokio runtime cannot be created.
     pub fn build(plugins: Vec<PluginSource>) -> Result<Self, PluginRuntimeError> {
         let rt = tokio::runtime::Builder::new_current_thread()
             .enable_all()
@@ -131,6 +137,10 @@ impl TestRuntime {
     /// # Errors
     ///
     /// Returns an error if any plugin fails to load.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the tokio runtime cannot be created.
     pub fn build_with(builder: PluginRuntimeBuilder) -> Result<Self, PluginRuntimeError> {
         let rt = tokio::runtime::Builder::new_current_thread()
             .enable_all()

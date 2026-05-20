@@ -11,9 +11,9 @@ use std::{
 use async_trait::async_trait;
 use dioxus_extism_protocol::{
     ClientCapabilities, ComponentResolution, HandlerId, HookCall, HookResult, HostCapability,
-    OverrideMap, PluginEvent, PluginId, PluginManifest, PluginView, PriorityHint, RoutePattern,
-    SessionCtx, SessionId, SlotContent, TransformContext, TransformInput, TransformOp,
-    TransformOutput, ViewUpdate, PROTOCOL_VERSION,
+    HostComponentRef, OverrideMap, PluginEvent, PluginId, PluginManifest, PluginView, PriorityHint,
+    RoutePattern, RouteTransforms, SessionCtx, SessionId, SlotContent, TransformContext,
+    TransformInput, TransformOp, TransformOutput, ViewUpdate, PROTOCOL_VERSION,
 };
 use extism::convert::Json;
 use futures::future::BoxFuture;
@@ -61,7 +61,8 @@ pub struct PluginInstallConfig {
 
 impl PluginInstallConfig {
     /// Resolve the effective priority for a contribution.
-    /// Order: per-name override > base_priority > hint.
+    /// Order: per-name override > `base_priority` > hint.
+    #[must_use] 
     pub fn resolve(&self, name: &str, hint: &PriorityHint) -> i32 {
         self.overrides
             .get(name)
@@ -73,7 +74,7 @@ impl PluginInstallConfig {
 
 // ── Loaded plugin ─────────────────────────────────────────────────────────────
 
-pub(crate) struct LoadedPlugin {
+pub struct LoadedPlugin {
     pub(crate) manifest: PluginManifest,
     pub(crate) pool: extism::Pool,
     pub(crate) enabled: AtomicBool,
@@ -84,8 +85,8 @@ pub(crate) struct LoadedPlugin {
 
 // ── Registries ────────────────────────────────────────────────────────────────
 
-pub(crate) struct SlotRegistry(pub(crate) HashMap<String, Vec<(i32, PluginId)>>);
-pub(crate) struct HookRegistry(pub(crate) HashMap<String, Vec<(i32, PluginId)>>);
+pub struct SlotRegistry(pub(crate) HashMap<String, Vec<(i32, PluginId)>>);
+pub struct HookRegistry(pub(crate) HashMap<String, Vec<(i32, PluginId)>>);
 
 /// A resolved transform entry, ready for render-time dispatch.
 #[derive(Debug, Clone)]
@@ -96,6 +97,8 @@ pub struct TransformEntry {
     pub op: TransformOp,
     /// Resolved priority (higher = called first).
     pub priority: i32,
+    /// The route pattern string, set only for `Selector::Route` entries.
+    pub route_pattern: Option<String>,
 }
 
 /// Indexes resolved `TransformEntry` values by selector type for efficient render-time lookup.
@@ -112,45 +115,50 @@ impl TransformRegistry {
     pub fn insert_component(&mut self, name: impl Into<String>, entry: TransformEntry) {
         let v = self.components.entry(name.into()).or_default();
         v.push(entry);
-        v.sort_by(|a, b| b.priority.cmp(&a.priority));
+        v.sort_by_key(|e| std::cmp::Reverse(e.priority));
     }
 
     /// Register a slot transform, maintaining priority-descending order.
     pub fn insert_slot(&mut self, name: impl Into<String>, entry: TransformEntry) {
         let v = self.slots.entry(name.into()).or_default();
         v.push(entry);
-        v.sort_by(|a, b| b.priority.cmp(&a.priority));
+        v.sort_by_key(|e| std::cmp::Reverse(e.priority));
     }
 
     /// Register a data-plugin-slot transform, maintaining priority-descending order.
     pub fn insert_data_slot(&mut self, name: impl Into<String>, entry: TransformEntry) {
         let v = self.data_slots.entry(name.into()).or_default();
         v.push(entry);
-        v.sort_by(|a, b| b.priority.cmp(&a.priority));
+        v.sort_by_key(|e| std::cmp::Reverse(e.priority));
     }
 
     /// Register a route transform, maintaining priority-descending order.
-    pub fn insert_route(&mut self, pattern: RoutePattern, entry: TransformEntry) {
+    pub fn insert_route(&mut self, pattern: RoutePattern, mut entry: TransformEntry) {
+        entry.route_pattern = Some(pattern.0.clone());
         self.routes.push((pattern, entry));
-        self.routes.sort_by(|a, b| b.1.priority.cmp(&a.1.priority));
+        self.routes.sort_by_key(|e| std::cmp::Reverse(e.1.priority));
     }
 
     /// Returns component transforms in priority-descending order, or empty if none.
+    #[must_use] 
     pub fn for_component(&self, name: &str) -> Vec<TransformEntry> {
         self.components.get(name).cloned().unwrap_or_default()
     }
 
     /// Returns slot transforms in priority-descending order, or empty if none.
+    #[must_use] 
     pub fn for_slot(&self, name: &str) -> Vec<TransformEntry> {
         self.slots.get(name).cloned().unwrap_or_default()
     }
 
     /// Returns data-plugin-slot transforms in priority-descending order, or empty if none.
+    #[must_use] 
     pub fn for_data_slot(&self, name: &str) -> Vec<TransformEntry> {
         self.data_slots.get(name).cloned().unwrap_or_default()
     }
 
     /// Returns all route transforms whose pattern matches `path`, in priority-descending order.
+    #[must_use] 
     pub fn for_route(&self, path: &str) -> Vec<TransformEntry> {
         self.routes
             .iter()
@@ -170,7 +178,7 @@ impl TransformRegistry {
     }
 }
 
-pub(crate) struct Registries {
+pub struct Registries {
     pub(crate) slots: SlotRegistry,
     pub(crate) hooks: HookRegistry,
     pub(crate) transforms: TransformRegistry,
@@ -189,7 +197,7 @@ type InvocationHandler = Arc<
 >;
 
 /// Maps named invocation handlers registered at build time.
-pub(crate) struct InvocationRegistry {
+pub struct InvocationRegistry {
     pub(crate) handlers: HashMap<String, (InvocationHandler, Duration)>,
 }
 
@@ -218,7 +226,7 @@ impl InvocationRegistry {
 
 // ── Event bus ─────────────────────────────────────────────────────────────────
 
-pub(crate) struct EventBus {
+pub struct EventBus {
     pub(crate) subscribers: HashMap<String, Vec<(i32, PluginId)>>,
 }
 
@@ -241,7 +249,7 @@ impl EventBus {
             }
         }
         for v in subscribers.values_mut() {
-            v.sort_by(|a, b| b.0.cmp(&a.0));
+            v.sort_by_key(|e| std::cmp::Reverse(e.0));
         }
         Self { subscribers }
     }
@@ -292,6 +300,9 @@ impl PluginRuntime {
     ///
     /// Plugins that fail to render serve a `PluginView::Incompatible` entry instead
     /// of aborting the entire slot.
+    ///
+    /// # Errors
+    /// Returns `PluginRuntimeError` if locking the registry fails.
     pub async fn render_slot(
         &self,
         slot_name: &str,
@@ -335,7 +346,7 @@ impl PluginRuntime {
                     plugin_id: plugin_id.clone(),
                     priority,
                     view: PluginView::Incompatible {
-                        reason: format!("plugin {:?} is disabled", plugin_id),
+                        reason: format!("plugin {plugin_id:?} is disabled"),
                         fallback: None,
                     },
                 });
@@ -377,6 +388,9 @@ impl PluginRuntime {
     ///
     /// Any plugin that fails is skipped (error isolation); a plugin can cancel the entire
     /// chain by returning `HookResult::Cancel`.
+    ///
+    /// # Errors
+    /// Returns `PluginRuntimeError` if context serialisation fails.
     pub async fn run_hook<T>(
         &self,
         hook_name: &str,
@@ -419,8 +433,7 @@ impl PluginRuntime {
             )
             .await
             {
-                Ok(HookResult::Continue { context: c }) => current = c,
-                Ok(HookResult::Replace { context: c }) => current = c,
+                Ok(HookResult::Continue { context: c } | HookResult::Replace { context: c }) => current = c,
                 Ok(HookResult::Cancel { reason }) => {
                     return Ok(HookOutcome::Cancelled { by: plugin_id, reason });
                 }
@@ -441,6 +454,9 @@ impl PluginRuntime {
     }
 
     /// Route an interaction event to the owning plugin and return the updated view.
+    ///
+    /// # Errors
+    /// Returns `PluginRuntimeError` if the plugin is not found or the call fails.
     pub async fn handle_interaction(
         &self,
         plugin_id: &PluginId,
@@ -471,6 +487,9 @@ impl PluginRuntime {
     }
 
     /// Emit an event to all registered subscribers, with error isolation.
+    ///
+    /// # Errors
+    /// Returns `PluginRuntimeError` if locking the registry fails.
     pub async fn emit_event(
         &self,
         event: PluginEvent,
@@ -515,6 +534,9 @@ impl PluginRuntime {
 
     /// Resolve all registered transforms for `component_name`, returning `None` if none are
     /// registered, or `Some(ComponentResolution)` otherwise (with per-plugin error isolation).
+    ///
+    /// # Errors
+    /// Returns `PluginRuntimeError` if locking the registry fails.
     pub async fn resolve_component(
         &self,
         component_name: &str,
@@ -539,7 +561,7 @@ impl PluginRuntime {
                 match plugins.get(&entry.plugin_id) {
                     Some(p)
                         if p.enabled.load(Ordering::Relaxed)
-                            && self.is_compatible(p, &session.client) =>
+                            && Self::is_compatible(p, &session.client) =>
                     {
                         p.pool.clone()
                     }
@@ -584,7 +606,176 @@ impl PluginRuntime {
         Ok(Some(ComponentResolution { before, replacement, after }))
     }
 
-    fn is_compatible(&self, plugin: &LoadedPlugin, client: &ClientCapabilities) -> bool {
+    /// Resolve all registered route transforms for `path`, returning partitioned results.
+    ///
+    /// The Wrap partition uses a sequential fold: each plugin receives the previous plugin's
+    /// full output as `original`, not the seed. On plugin error, `current_view` stays
+    /// unchanged and the fold continues (error isolation). `InjectBefore` and `InjectAfter`
+    /// are error-isolated independently.
+    ///
+    /// # Errors
+    /// Returns `PluginRuntimeError` if locking the registry fails.
+    pub async fn render_route_transforms(
+        &self,
+        path: &str,
+        session: &SessionCtx,
+    ) -> Result<RouteTransforms, PluginRuntimeError> {
+        let all_entries = {
+            let regs = self.registries.read().await;
+            regs.transforms.for_route(path)
+        };
+
+        let mut inject_before = vec![];
+        let mut wrap_entries = vec![];
+        let mut inject_after = vec![];
+
+        for entry in all_entries {
+            match entry.op {
+                TransformOp::InjectBefore => inject_before.push(entry),
+                TransformOp::Wrap => wrap_entries.push(entry),
+                TransformOp::InjectAfter => inject_after.push(entry),
+                _ => {}
+            }
+        }
+
+        let before = self.run_inject_transforms(&inject_before, path, session).await;
+
+        let wrap = if wrap_entries.is_empty() {
+            None
+        } else {
+            let seed = PluginView::HostComponent(HostComponentRef {
+                name: "__content__".into(),
+                ..Default::default()
+            });
+            let mut current = seed;
+
+            for entry in &wrap_entries {
+                let pool = {
+                    let plugins = self.plugins.read().await;
+                    match plugins.get(&entry.plugin_id) {
+                        Some(p)
+                            if p.enabled.load(Ordering::Relaxed)
+                                && Self::is_compatible(p, &session.client) =>
+                        {
+                            p.pool.clone()
+                        }
+                        _ => continue,
+                    }
+                };
+
+                let params = entry
+                    .route_pattern
+                    .as_deref()
+                    .and_then(|pat| RoutePattern(pat.into()).extract_params(path))
+                    .unwrap_or_default();
+
+                let input = TransformInput {
+                    original: Some(current.clone()),
+                    context: TransformContext {
+                        route_params: params,
+                        client: session.client.clone(),
+                        ..Default::default()
+                    },
+                    session: session.clone(),
+                };
+
+                match call_export::<TransformInput, TransformOutput>(
+                    pool,
+                    entry.transform_fn.clone(),
+                    input,
+                    session.clone(),
+                )
+                .await
+                {
+                    Ok(out) => {
+                        #[cfg(debug_assertions)]
+                        if !view_contains_content_placeholder(&out.view) {
+                            tracing::warn!(
+                                plugin = %entry.plugin_id.0,
+                                transform_fn = %entry.transform_fn,
+                                "Wrap output omits __content__ placeholder; original content cut"
+                            );
+                        }
+                        current = out.view;
+                    }
+                    Err(e) => {
+                        tracing::warn!(
+                            plugin = %entry.plugin_id.0,
+                            error = %e,
+                            "wrap transform failed, keeping current view"
+                        );
+                    }
+                }
+            }
+            Some(current)
+        };
+
+        let after = self.run_inject_transforms(&inject_after, path, session).await;
+
+        Ok(RouteTransforms { before, wrap, after })
+    }
+
+    async fn run_inject_transforms(
+        &self,
+        entries: &[TransformEntry],
+        path: &str,
+        session: &SessionCtx,
+    ) -> Vec<PluginView> {
+        let mut views = Vec::with_capacity(entries.len());
+
+        for entry in entries {
+            let pool = {
+                let plugins = self.plugins.read().await;
+                match plugins.get(&entry.plugin_id) {
+                    Some(p)
+                        if p.enabled.load(Ordering::Relaxed)
+                            && Self::is_compatible(p, &session.client) =>
+                    {
+                        p.pool.clone()
+                    }
+                    _ => continue,
+                }
+            };
+
+            let params = entry
+                .route_pattern
+                .as_deref()
+                .and_then(|pat| RoutePattern(pat.into()).extract_params(path))
+                .unwrap_or_default();
+
+            let input = TransformInput {
+                original: None,
+                context: TransformContext {
+                    route_params: params,
+                    client: session.client.clone(),
+                    ..Default::default()
+                },
+                session: session.clone(),
+            };
+
+            match call_export::<TransformInput, TransformOutput>(
+                pool,
+                entry.transform_fn.clone(),
+                input,
+                session.clone(),
+            )
+            .await
+            {
+                Ok(out) => views.push(out.view),
+                Err(e) => {
+                    tracing::warn!(
+                        plugin = %entry.plugin_id.0,
+                        error = %e,
+                        "inject transform failed, skipping"
+                    );
+                }
+            }
+        }
+
+        views
+    }
+
+    const fn is_compatible(plugin: &LoadedPlugin, client: &ClientCapabilities) -> bool {
         plugin.manifest.min_protocol_version <= client.protocol_version
             && plugin.manifest.min_app_version <= client.app_version
     }
@@ -628,6 +819,7 @@ impl PluginRuntime {
                     transform_fn: transform.transform_fn.clone(),
                     op: transform.op.clone(),
                     priority,
+                    route_pattern: None,
                 };
                 match &transform.selector {
                     Selector::Component(name) => {
@@ -663,10 +855,10 @@ impl PluginRuntime {
         }
 
         for v in slots.values_mut() {
-            v.sort_by(|a, b| b.0.cmp(&a.0));
+            v.sort_by_key(|e| std::cmp::Reverse(e.0));
         }
         for v in hooks.values_mut() {
-            v.sort_by(|a, b| b.0.cmp(&a.0));
+            v.sort_by_key(|e| std::cmp::Reverse(e.0));
         }
         route_patterns.dedup();
 
@@ -687,12 +879,24 @@ impl PluginRuntime {
     }
 }
 
+// ── Helpers ───────────────────────────────────────────────────────────────────
+
+/// Returns `true` if `view` contains a `HostComponent("__content__")` at any depth.
+fn view_contains_content_placeholder(view: &PluginView) -> bool {
+    match view {
+        PluginView::HostComponent(r) if r.name == "__content__" => true,
+        PluginView::Element(el) => el.children.iter().any(view_contains_content_placeholder),
+        PluginView::Fragment(children) => children.iter().any(view_contains_content_placeholder),
+        _ => false,
+    }
+}
+
 // ── Call helper ───────────────────────────────────────────────────────────────
 
 /// Call a WASM plugin export with JSON I/O on a blocking thread.
 ///
 /// Sets the thread-local session context before calling so host function callbacks
-/// can read the current session without per-instance UserData.
+/// can read the current session without per-instance `UserData`.
 async fn call_export<I, O>(
     pool: extism::Pool,
     export: impl Into<String>,
@@ -707,7 +911,7 @@ where
     tokio::task::spawn_blocking(move || {
         host_functions::set_call_session(session.session_id.clone(), session.client.clone());
         let mut plugin = pool
-            .get(Duration::from_millis(5000))
+            .get(Duration::from_secs(5))
             .map_err(|e| PluginRuntimeError::CallFailed { source: e })?
             .ok_or_else(|| PluginRuntimeError::Pool("timeout waiting for plugin instance".into()))?;
         let Json(result) = plugin
@@ -726,6 +930,7 @@ async fn fetch_and_verify(source: &PluginSource) -> Result<Vec<u8>, PluginRuntim
         PluginSource::Bytes(bytes) => Ok(bytes.to_vec()),
         PluginSource::File(path) => std::fs::read(path).map_err(PluginRuntimeError::Io),
         PluginSource::Url { url, sha256 } => {
+            use sha2::Digest;
             let bytes = reqwest::get(url.as_str())
                 .await
                 .map_err(|e| PluginRuntimeError::FetchFailed {
@@ -740,7 +945,6 @@ async fn fetch_and_verify(source: &PluginSource) -> Result<Vec<u8>, PluginRuntim
                 })?
                 .to_vec();
 
-            use sha2::Digest;
             let digest: [u8; 32] = sha2::Sha256::digest(&bytes).into();
             if digest != *sha256 {
                 return Err(PluginRuntimeError::ChecksumMismatch { url: url.clone() });
@@ -827,7 +1031,7 @@ impl PluginRuntimeBuilder {
 
     /// Configure session state TTL (default: 24 hours).
     #[must_use]
-    pub fn with_session_ttl(mut self, ttl: Duration) -> Self {
+    pub const fn with_session_ttl(mut self, ttl: Duration) -> Self {
         self.session_ttl = Some(ttl);
         self
     }
@@ -876,6 +1080,7 @@ impl PluginRuntimeBuilder {
     ///
     /// Returns an error if any plugin fails to load, compile, or has an incompatible
     /// protocol version, unregistered invocation capability, or checksum mismatch.
+    #[allow(clippy::too_many_lines)]
     pub async fn build(self) -> Result<Arc<PluginRuntime>, PluginRuntimeError> {
         let global_states: Arc<RwLock<GlobalStateMap>> = Arc::new(RwLock::new(HashMap::new()));
         let session_states: Arc<RwLock<SessionStateMap>> = Arc::new(RwLock::new(HashMap::new()));
@@ -944,7 +1149,7 @@ impl PluginRuntimeBuilder {
 
             let pool_size = config
                 .pool_size
-                .unwrap_or_else(|| std::thread::available_parallelism().map(usize::from).unwrap_or(4));
+                .unwrap_or_else(|| std::thread::available_parallelism().map_or(4, usize::from));
 
             let bytes = fetch_and_verify(&source).await?;
             let ext_manifest = extism::Manifest::new([extism::Wasm::data(bytes)]);
@@ -962,7 +1167,7 @@ impl PluginRuntimeBuilder {
 
             // Call on_load if exported — failure aborts build.
             let has_on_load = pool
-                .function_exists("on_load", Duration::from_millis(5000))
+                .function_exists("on_load", Duration::from_secs(5))
                 .map_err(|e| PluginRuntimeError::CallFailed { source: e })?;
 
             if has_on_load {
@@ -984,7 +1189,7 @@ impl PluginRuntimeBuilder {
                         init_session_clone.client.clone(),
                     );
                     let mut p = pool_clone
-                        .get(Duration::from_millis(5000))
+                        .get(Duration::from_secs(5))
                         .map_err(|e| PluginRuntimeError::CallFailed { source: e })?
                         .ok_or_else(|| {
                             PluginRuntimeError::Pool("timeout on on_load".into())
@@ -1047,6 +1252,8 @@ async fn load_plugin_manifest(source: &PluginSource) -> Result<PluginManifest, P
 
 /// Extension trait for wiring `PluginRuntime` into an Axum router.
 pub trait PluginRuntimeExt {
+    /// Add `PluginRuntime` as an Axum layer so server functions can extract it.
+    #[must_use]
     fn with_plugin_runtime(self, runtime: Arc<PluginRuntime>) -> Self;
 }
 

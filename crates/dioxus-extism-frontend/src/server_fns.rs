@@ -1,24 +1,70 @@
 use dioxus::prelude::*;
 use dioxus_extism_protocol::{
-    ClientCapabilities, ComponentResolution, OverrideMap, SessionId, SlotContent,
+    ClientCapabilities, ComponentResolution, OverrideMap, RouteTransforms, SessionId, SlotContent,
 };
 
 /// Fetch the current `OverrideMap` at boot time.
 #[server]
 pub async fn get_override_map(
-    _caps: ClientCapabilities,
+    caps: ClientCapabilities,
 ) -> Result<OverrideMap, ServerFnError> {
-    Ok(OverrideMap::default())
+    use std::sync::Arc;
+
+    use axum::extract::Extension;
+    use dioxus_extism_host::PluginRuntime;
+
+    let _ = caps;
+    let result: Result<Extension<Arc<PluginRuntime>>, _> =
+        dioxus::fullstack::FullstackContext::extract().await;
+    match result {
+        Ok(Extension(runtime)) => Ok(runtime.override_map().await),
+        Err(_) => Ok(OverrideMap::default()),
+    }
 }
 
 /// Fetch slot contributions for a named slot.
+#[allow(clippy::unused_async)]
 #[server]
 pub async fn get_slot_content(
-    _slot: String,
-    _session_id: SessionId,
-    _caps: ClientCapabilities,
+    slot: String,
+    session_id: SessionId,
+    caps: ClientCapabilities,
 ) -> Result<Vec<SlotContent>, ServerFnError> {
+    let _ = (slot, session_id, caps);
     Ok(vec![])
+}
+
+/// Resolve route transforms (before/wrap/after) for the current path.
+///
+/// Returns `RouteTransforms::empty()` when no plugins are registered for `path`.
+/// The `PluginRuntime` must be added to the Axum router via `PluginRuntimeExt::with_plugin_runtime`.
+#[server]
+pub async fn get_route_transforms(
+    path: String,
+    session_id: SessionId,
+    caps: ClientCapabilities,
+) -> Result<RouteTransforms, ServerFnError> {
+    use std::sync::Arc;
+
+    use axum::extract::Extension;
+    use dioxus_extism_host::PluginRuntime;
+    use dioxus_extism_protocol::SessionCtx;
+
+    let Extension(runtime): Extension<Arc<PluginRuntime>> =
+        dioxus::fullstack::FullstackContext::extract()
+            .await
+            .map_err(|e| {
+                ServerFnError::new(format!(
+                    "PluginRuntime not in request extensions — did you call with_plugin_runtime? ({e})"
+                ))
+            })?;
+
+    let session = SessionCtx { session_id, user_id: None, client: caps, caller: None };
+
+    runtime
+        .render_route_transforms(&path, &session)
+        .await
+        .map_err(|e| ServerFnError::new(e.to_string()))
 }
 
 /// Resolve plugin transforms for a named component.

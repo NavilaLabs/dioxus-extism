@@ -7,9 +7,9 @@ pub use extism_pdk;
 
 pub use dioxus_extism_protocol::{
     ClientCapabilities, HandlerId, HookCall, HookResult, HostCapability, HostComponentRef,
-    PluginEvent, PluginId, PluginManifest, PluginView, PriorityHint, SessionCtx, SessionId,
-    SlotContent, SlotRegistration, StateScope, TransformDeclaration, TransformInput,
-    TransformOp, TransformOutput, ViewUpdate,
+    PluginEvent, PluginId, PluginManifest, PluginView, PriorityHint, RoutePattern, Selector,
+    SessionCtx, SessionId, SlotContent, SlotRegistration, StateScope, TransformDeclaration,
+    TransformInput, TransformOp, TransformOutput, ViewUpdate,
 };
 pub use error::PdkError;
 pub use view::{div, element, incompatible, original_content, span, text, ViewBuilder};
@@ -20,9 +20,9 @@ pub mod prelude {
         ClientCapabilities, DioxusPlugin, EventSubscriber, HandlerId, HookCall, HookHandler,
         HookResult, HostCapability, HostComponentRef, InteractionHandler, OnLoad, OnUnload,
         PdkError, PluginCtx, PluginEvent, PluginId, PluginManifest, PluginView, PriorityHint,
-        SessionCtx, SessionId, SlotContent, SlotRegistration, SlotProvider, StateScope,
-        TransformDeclaration, TransformInput, TransformOp, TransformOutput, TransformProvider,
-        ViewUpdate, div, element, incompatible, original_content, span, text,
+        RoutePattern, Selector, SessionCtx, SessionId, SlotContent, SlotRegistration, SlotProvider,
+        StateScope, TransformDeclaration, TransformInput, TransformOp, TransformOutput,
+        TransformProvider, ViewUpdate, div, element, incompatible, original_content, span, text,
     };
 }
 
@@ -36,22 +36,30 @@ pub trait DioxusPlugin {
 /// Implemented by a plugin to contribute content to a named slot.
 pub trait SlotProvider: DioxusPlugin {
     const SLOT_NAME: &'static str;
+    /// # Errors
+    /// Returns `PdkError` if the plugin cannot render the view.
     fn render(ctx: &PluginCtx) -> Result<PluginView, PdkError>;
 }
 
 /// Implemented by a plugin to intercept a named hook.
 pub trait HookHandler: DioxusPlugin {
     const HOOK_NAME: &'static str;
+    /// # Errors
+    /// Returns `PdkError` if the hook handler fails.
     fn handle(call: HookCall, ctx: &PluginCtx) -> Result<HookResult, PdkError>;
 }
 
 /// Implemented by a plugin to subscribe to named events.
 pub trait EventSubscriber: DioxusPlugin {
+    /// # Errors
+    /// Returns `PdkError` if the event handler fails.
     fn on_event(event: PluginEvent, ctx: &PluginCtx) -> Result<(), PdkError>;
 }
 
 /// Implemented by a plugin to handle UI interactions.
 pub trait InteractionHandler: DioxusPlugin {
+    /// # Errors
+    /// Returns `PdkError` if the interaction handler fails.
     fn on_interaction(
         handler_id: HandlerId,
         event_data: serde_json::Value,
@@ -61,16 +69,22 @@ pub trait InteractionHandler: DioxusPlugin {
 
 /// Optional lifecycle: called once after pool initialisation.
 pub trait OnLoad: DioxusPlugin {
+    /// # Errors
+    /// Returns `PdkError` if initialisation fails.
     fn on_load(ctx: &PluginCtx) -> Result<(), PdkError>;
 }
 
 /// Optional lifecycle: called before pool drop.
 pub trait OnUnload: DioxusPlugin {
+    /// # Errors
+    /// Returns `PdkError` if cleanup fails.
     fn on_unload() -> Result<(), PdkError>;
 }
 
 /// Implemented to provide route/slot/component transforms.
 pub trait TransformProvider: DioxusPlugin {
+    /// # Errors
+    /// Returns `PdkError` if the transform fails.
     fn transform(input: TransformInput, ctx: &PluginCtx) -> Result<TransformOutput, PdkError>;
 }
 
@@ -87,6 +101,7 @@ pub struct PluginCtx {
 
 impl PluginCtx {
     /// Construct from the session context received on each call.
+    #[must_use] 
     pub fn from_session(session: SessionCtx) -> Self {
         let client = session.client.clone();
         Self {
@@ -112,7 +127,7 @@ pub struct InvocationAccessor;
 
 #[allow(unsafe_code)]
 pub mod host_fns {
-    use extism_pdk::*;
+    use extism_pdk::host_fn;
 
     #[host_fn]
     extern "ExtismHost" {

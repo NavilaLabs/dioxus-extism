@@ -2,12 +2,13 @@ use std::collections::HashMap;
 
 use dioxus::prelude::*;
 use dioxus_extism_protocol::{
-    AttrValue, ClientCapabilities, HostComponentRef, OverrideMap, PluginView, SessionId,
-    ViewElement, PROTOCOL_VERSION,
+    AttrValue, ClientCapabilities, HostComponentRef, OverrideMap, PluginView, RouteTransforms,
+    SessionId, ViewElement, PROTOCOL_VERSION,
 };
 
-
-use crate::server_fns::{get_component_resolution, get_override_map, get_slot_content};
+use crate::server_fns::{
+    get_component_resolution, get_override_map, get_route_transforms, get_slot_content,
+};
 use crate::session::use_session_id;
 
 // ── HostComponentRegistry ────────────────────────────────────────────────────
@@ -21,11 +22,16 @@ pub struct HostComponentRegistry {
 }
 
 impl HostComponentRegistry {
+    #[must_use] 
     pub fn new() -> Self {
         Self::default()
     }
 
     /// Register a named host component renderer.
+    ///
+    /// # Panics
+    /// Panics if the registry has already been shared via `Clone`.
+    #[must_use]
     pub fn register(
         mut self,
         name: impl Into<String>,
@@ -38,6 +44,7 @@ impl HostComponentRegistry {
     }
 
     /// Returns the names of all registered host components.
+    #[must_use] 
     pub fn names(&self) -> Vec<String> {
         self.inner.keys().cloned().collect()
     }
@@ -64,7 +71,7 @@ pub fn PluginBootProvider(children: Element) -> Element {
 
     let mut override_map: Signal<OverrideMap> = use_signal(OverrideMap::default);
 
-    let caps_clone = caps.clone();
+    let caps_clone = caps;
     use_resource(move || {
         let caps = caps_clone.clone();
         async move {
@@ -94,7 +101,7 @@ pub fn PluginSlot(
     let session_id = use_session_id();
     let client_caps = use_context::<ClientCapabilities>();
 
-    let name_clone = name.clone();
+    let name_clone = name;
     let contents = use_resource(move || {
         let name = name_clone.clone();
         let sid: SessionId = session_id.read().clone();
@@ -109,7 +116,7 @@ pub fn PluginSlot(
                 for content in c.iter().cloned() {
                     PluginViewRenderer {
                         key: "{content.plugin_id.0}",
-                        view: content.view.clone(),
+                        view: content.view,
                         session_id,
                     }
                 }
@@ -155,8 +162,8 @@ fn OverridableComponentInner(
     let session_id = use_session_id();
     let client_caps = use_context::<ClientCapabilities>();
 
-    let name_clone = name.clone();
-    let props_clone = props.clone();
+    let name_clone = name;
+    let props_clone = props;
     let resolution = use_resource(move || {
         let n = name_clone.clone();
         let p = props_clone.clone();
@@ -166,12 +173,12 @@ fn OverridableComponentInner(
     });
 
     match resolution.read().as_ref() {
-        None | Some(Err(_)) | Some(Ok(None)) => fallback.clone(),
+        None | Some(Err(_) | Ok(None)) => fallback,
         Some(Ok(Some(r))) => {
             let before = r.before.clone();
             let replacement = r.replacement.clone();
             let after = r.after.clone();
-            let fallback = fallback.clone();
+            let fallback = fallback;
             rsx! {
                 for (i, view) in before.into_iter().enumerate() {
                     PluginViewRenderer { key: "{i}-b", view, session_id }
@@ -189,6 +196,110 @@ fn OverridableComponentInner(
     }
 }
 
+// ── use_current_path ─────────────────────────────────────────────────────────
+
+/// Returns the current URL pathname.
+///
+/// On wasm32 targets this reads `window.location.pathname` directly.
+/// On non-wasm32 targets (desktop, server) it returns `"/"` — route-based
+/// transforms are a web-only feature and will not trigger on those targets.
+#[must_use] 
+pub fn use_current_path() -> String {
+    #[cfg(target_arch = "wasm32")]
+    {
+        web_sys::window()
+            .and_then(|w| w.location().pathname().ok())
+            .unwrap_or_else(|| "/".into())
+    }
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        "/".into()
+    }
+}
+
+// ── PluginAwareRouter ─────────────────────────────────────────────────────────
+
+/// Router wrapper that applies plugin route transforms around `Outlet<R>`.
+///
+/// Fast path: if no route pattern in the `OverrideMap` matches the current path,
+/// `Outlet<R>` renders directly without any server call.
+/// If patterns match, `PluginAwareRouterInner` issues a server call and applies
+/// before/wrap/after views.
+#[component]
+pub fn PluginAwareRouter<R: Routable + Clone>() -> Element
+where
+    <R as std::str::FromStr>::Err: std::fmt::Display,
+{
+    let path = use_current_path();
+    let override_map: Signal<OverrideMap> = use_context::<Signal<OverrideMap>>();
+    let has_transforms = override_map.read().route_patterns.iter().any(|p| p.matches(&path));
+
+    if has_transforms {
+        rsx! {
+            PluginAwareRouterInner {
+                path,
+                outlet: rsx! { Outlet::<R> {} },
+            }
+        }
+    } else {
+        rsx! { Outlet::<R> {} }
+    }
+}
+
+/// Inner half of `PluginAwareRouter` that issues the server call.
+///
+/// Non-generic: the outer component passes `Outlet<R>` pre-constructed as `outlet`.
+/// Kept separate so `use_resource` is always called in the same hook position —
+/// calling it conditionally in the outer component would violate Dioxus hook ordering.
+#[component]
+fn PluginAwareRouterInner(path: String, outlet: Element) -> Element {
+    let session_id = use_session_id();
+    let client_caps = use_context::<ClientCapabilities>();
+
+    let path_clone = path;
+    let transforms: Resource<Result<RouteTransforms, ServerFnError>> = use_resource(move || {
+        let p = path_clone.clone();
+        let sid: SessionId = session_id.read().clone();
+        let caps = client_caps.clone();
+        async move { get_route_transforms(p, sid, caps).await }
+    });
+
+    match transforms.read().as_ref() {
+        Some(Ok(t)) if t.has_wrap() => {
+            let before = t.before.clone();
+            let wrap = t.wrap.clone().expect("has_wrap is true");
+            let after = t.after.clone();
+            rsx! {
+                for (i, view) in before.into_iter().enumerate() {
+                    PluginViewRenderer { key: "{i}-b", view, session_id }
+                }
+                PluginViewRenderer {
+                    view: wrap,
+                    session_id,
+                    content_slot: outlet,
+                }
+                for (i, view) in after.into_iter().enumerate() {
+                    PluginViewRenderer { key: "{i}-a", view, session_id }
+                }
+            }
+        }
+        Some(Ok(t)) => {
+            let before = t.before.clone();
+            let after = t.after.clone();
+            rsx! {
+                for (i, view) in before.into_iter().enumerate() {
+                    PluginViewRenderer { key: "{i}-b", view, session_id }
+                }
+                {outlet}
+                for (i, view) in after.into_iter().enumerate() {
+                    PluginViewRenderer { key: "{i}-a", view, session_id }
+                }
+            }
+        }
+        _ => outlet,
+    }
+}
+
 // ── PluginViewRenderer ────────────────────────────────────────────────────────
 
 /// Renders a `PluginView` tree into Dioxus elements.
@@ -196,6 +307,7 @@ fn OverridableComponentInner(
 pub fn PluginViewRenderer(
     view: PluginView,
     session_id: Signal<SessionId>,
+    #[props(default)] content_slot: Option<Element>,
 ) -> Element {
     match view {
         PluginView::Empty => rsx! {},
@@ -206,11 +318,12 @@ pub fn PluginViewRenderer(
                     key: "{i}",
                     view: child,
                     session_id,
+                    content_slot: content_slot.clone(),
                 }
             }
         },
-        PluginView::Element(el) => render_element(el, session_id),
-        PluginView::HostComponent(r) => render_host_component(r, session_id),
+        PluginView::Element(el) => render_element(el, session_id, content_slot),
+        PluginView::HostComponent(r) => render_host_component(r, session_id, content_slot),
         PluginView::Incompatible { reason, .. } => rsx! {
             div {
                 class: "plugin-incompatible",
@@ -221,7 +334,8 @@ pub fn PluginViewRenderer(
     }
 }
 
-fn render_element(el: ViewElement, session_id: Signal<SessionId>) -> Element {
+#[allow(clippy::too_many_lines, clippy::needless_pass_by_value)]
+fn render_element(el: ViewElement, session_id: Signal<SessionId>, content_slot: Option<Element>) -> Element {
     // Build attributes as a string map — Dioxus requires static attribute names,
     // so we emit a data-encoded element for the generic case and handle common
     // tags specially. For Phase 1 we emit a div with class forwarded.
@@ -263,6 +377,7 @@ fn render_element(el: ViewElement, session_id: Signal<SessionId>) -> Element {
                         key: "{i}",
                         view: child,
                         session_id,
+                        content_slot: content_slot.clone(),
                     }
                 }
             }
@@ -276,6 +391,7 @@ fn render_element(el: ViewElement, session_id: Signal<SessionId>) -> Element {
                         key: "{i}",
                         view: child,
                         session_id,
+                        content_slot: content_slot.clone(),
                     }
                 }
             }
@@ -289,6 +405,7 @@ fn render_element(el: ViewElement, session_id: Signal<SessionId>) -> Element {
                         key: "{i}",
                         view: child,
                         session_id,
+                        content_slot: content_slot.clone(),
                     }
                 }
             }
@@ -302,6 +419,7 @@ fn render_element(el: ViewElement, session_id: Signal<SessionId>) -> Element {
                         key: "{i}",
                         view: child,
                         session_id,
+                        content_slot: content_slot.clone(),
                     }
                 }
             }
@@ -315,6 +433,7 @@ fn render_element(el: ViewElement, session_id: Signal<SessionId>) -> Element {
                         key: "{i}",
                         view: child,
                         session_id,
+                        content_slot: content_slot.clone(),
                     }
                 }
             }
@@ -329,6 +448,7 @@ fn render_element(el: ViewElement, session_id: Signal<SessionId>) -> Element {
                         key: "{i}",
                         view: child,
                         session_id,
+                        content_slot: content_slot.clone(),
                     }
                 }
             }
@@ -336,14 +456,21 @@ fn render_element(el: ViewElement, session_id: Signal<SessionId>) -> Element {
     }
 }
 
-fn render_host_component(r: HostComponentRef, session_id: Signal<SessionId>) -> Element {
+fn render_host_component(
+    r: HostComponentRef,
+    session_id: Signal<SessionId>,
+    content_slot: Option<Element>,
+) -> Element {
+    if r.name == "__content__" {
+        return content_slot.unwrap_or(rsx! {});
+    }
+
     let registry = try_use_context::<HostComponentRegistry>().unwrap_or_default();
 
     if let Some(el) = registry.render(&r.name, r.clone()) {
         return el;
     }
 
-    // Fallback: render children or nothing
     if r.children.is_empty() {
         rsx! {}
     } else {
@@ -353,6 +480,7 @@ fn render_host_component(r: HostComponentRef, session_id: Signal<SessionId>) -> 
                     key: "{i}",
                     view: child,
                     session_id,
+                    content_slot: None,
                 }
             }
         }

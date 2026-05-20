@@ -16,21 +16,21 @@ use crate::InvocationError;
 // to identify the current session without needing per-instance UserData.
 
 thread_local! {
-    static CALL_SESSION_ID: RefCell<SessionId> = RefCell::new(SessionId(String::new()));
-    static CALL_CLIENT: RefCell<ClientCapabilities> = RefCell::new(ClientCapabilities {
+    static CALL_SESSION_ID: RefCell<SessionId> = const { RefCell::new(SessionId(String::new())) };
+    static CALL_CLIENT: RefCell<ClientCapabilities> = const { RefCell::new(ClientCapabilities {
         protocol_version: 0,
         app_version: 0,
         registered_host_components: Vec::new(),
-    });
+    }) };
 }
 
 /// Set the thread-local session context before a blocking plugin call.
-pub(crate) fn set_call_session(session_id: SessionId, client: ClientCapabilities) {
+pub fn set_call_session(session_id: SessionId, client: ClientCapabilities) {
     CALL_SESSION_ID.with(|c| *c.borrow_mut() = session_id);
     CALL_CLIENT.with(|c| *c.borrow_mut() = client);
 }
 
-pub(crate) fn get_call_session_id() -> SessionId {
+pub fn get_call_session_id() -> SessionId {
     CALL_SESSION_ID.with(|c| c.borrow().clone())
 }
 
@@ -38,9 +38,9 @@ pub(crate) fn get_call_session_id() -> SessionId {
 
 /// Context carried in every host function's `UserData`.
 /// One instance per plugin pool; all pool instances share it via `Arc<Mutex<...>>`.
-/// Per-call session info (session_id, client) lives in thread-locals above.
+/// Per-call session info (`session_id`, client) lives in thread-locals above.
 #[derive(Clone)]
-pub(crate) struct CallCtx {
+pub struct CallCtx {
     /// The plugin that owns this pool — constant for the pool's lifetime.
     pub caller: PluginId,
     pub session_states: Arc<RwLock<SessionStateMap>>,
@@ -52,7 +52,7 @@ pub(crate) struct CallCtx {
 }
 
 /// Build all host functions, wiring them to `ctx`.
-pub(crate) fn make_host_functions(
+pub fn make_host_functions(
     user_data: extism::UserData<CallCtx>,
 ) -> Vec<extism::Function> {
     vec![
@@ -217,8 +217,7 @@ fn make_global_state_get(user_data: extism::UserData<CallCtx>) -> extism::Functi
             };
             if !granted.is_empty() && !granted.contains(&key) {
                 return Err(anyhow::anyhow!(
-                    "capability denied: GlobalStateRead({key}) not granted to {:?}",
-                    caller
+                    "capability denied: GlobalStateRead({key}) not granted to {caller:?}"
                 ));
             }
             let handle = tokio::runtime::Handle::current();
@@ -261,8 +260,7 @@ fn make_global_state_set(user_data: extism::UserData<CallCtx>) -> extism::Functi
             };
             if !granted.is_empty() && !granted.contains(&key) {
                 return Err(anyhow::anyhow!(
-                    "capability denied: GlobalStateWrite({key}) not granted to {:?}",
-                    caller
+                    "capability denied: GlobalStateWrite({key}) not granted to {caller:?}"
                 ));
             }
             let handle = tokio::runtime::Handle::current();
@@ -410,8 +408,7 @@ fn make_invoke(user_data: extism::UserData<CallCtx>) -> extism::Function {
 
             if !granted.contains(&name) {
                 return Err(anyhow::anyhow!(
-                    "capability denied: Invoke({name}) not granted to {:?}",
-                    caller
+                    "capability denied: Invoke({name}) not granted to {caller:?}"
                 ));
             }
 

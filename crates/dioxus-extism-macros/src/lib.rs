@@ -16,21 +16,17 @@ pub fn overridable(_attr: TokenStream, item: TokenStream) -> TokenStream {
 
     // Reject impl Trait parameters — they cannot be serialised into the props JSON.
     for arg in &input.sig.inputs {
-        if let FnArg::Typed(pat_type) = arg {
-            if let Type::ImplTrait(_) = &*pat_type.ty {
-                let param_name = if let Pat::Ident(ident) = &*pat_type.pat {
-                    ident.ident.to_string()
-                } else {
-                    "unknown".to_string()
-                };
-                let msg = format!(
-                    "Parameter `{param_name}: impl Trait` cannot be used with \
-                     #[overridable]. Use a concrete type or wrap in a serialisable struct.",
-                );
-                return syn::Error::new(Span::call_site(), msg)
-                    .to_compile_error()
-                    .into();
-            }
+        if let FnArg::Typed(pat_type) = arg
+            && let Type::ImplTrait(_) = &*pat_type.ty
+        {
+            let param_name = if let Pat::Ident(ident) = &*pat_type.pat { ident.ident.to_string() } else { "unknown".to_string() };
+            let msg = format!(
+                "Parameter `{param_name}: impl Trait` cannot be used with \
+                 #[overridable]. Use a concrete type or wrap in a serialisable struct.",
+            );
+            return syn::Error::new(Span::call_site(), msg)
+                .to_compile_error()
+                .into();
         }
     }
 
@@ -47,16 +43,15 @@ pub fn overridable(_attr: TokenStream, item: TokenStream) -> TokenStream {
         .inputs
         .iter()
         .filter_map(|arg| {
-            if let FnArg::Typed(pat_type) = arg {
-                if let Pat::Ident(ident) = &*pat_type.pat {
-                    let name = &ident.ident;
-                    // Skip children — it's an Element and not serialisable.
-                    if name == "children" {
-                        return None;
-                    }
-                    let name_str = name.to_string();
-                    return Some(quote! { #name_str: &#name });
+            if let FnArg::Typed(pat_type) = arg
+                && let Pat::Ident(ident) = &*pat_type.pat
+            {
+                let name = &ident.ident;
+                if name == "children" {
+                    return None;
                 }
+                let name_str = name.to_string();
+                return Some(quote! { #name_str: &#name });
             }
             None
         })

@@ -6,6 +6,7 @@ mod host_functions;
 mod runtime;
 
 pub use error::{InvocationError, PersistenceError, PluginRuntimeError};
+pub use dioxus_extism_protocol::RouteTransforms;
 pub use runtime::{
     GlobalStateMap, HookOutcome, PluginInstallConfig, PluginRuntime, PluginRuntimeBuilder,
     PluginRuntimeExt, PluginSource, SessionStateMap, StatePersistenceProvider, TransformEntry,

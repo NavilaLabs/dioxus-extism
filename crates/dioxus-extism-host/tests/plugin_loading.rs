@@ -5,7 +5,7 @@ use dioxus_extism_protocol::{
 
 /// hello-plugin WASM built for wasm32-unknown-unknown release.
 const HELLO_WASM: &[u8] = include_bytes!(
-    "../../target/wasm32-unknown-unknown/release/hello_plugin_plugin.wasm"
+    "../../../target/wasm32-unknown-unknown/release/hello_plugin_plugin.wasm"
 );
 
 fn test_session() -> SessionCtx {
@@ -129,5 +129,6 @@ async fn hook_with_no_handlers_passes_through() {
         HookOutcome::Cancelled { by, reason } => {
             panic!("hook cancelled by {by:?}: {reason}");
         }
+        _ => panic!("unexpected HookOutcome variant"),
     }
 }

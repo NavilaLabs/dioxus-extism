@@ -7,6 +7,7 @@ fn entry(plugin: &str, priority: i32, op: TransformOp) -> TransformEntry {
         transform_fn: "fn".into(),
         op,
         priority,
+        route_pattern: None,
     }
 }
 
@@ -37,6 +38,17 @@ fn route_matches_pattern() {
     );
     assert_eq!(reg.for_route("/product/42").len(), 1);
     assert!(reg.for_route("/other").is_empty());
+}
+
+#[test]
+fn insert_route_sets_route_pattern() {
+    let mut reg = TransformRegistry::default();
+    reg.insert_route(
+        RoutePattern("/product/:id".into()),
+        entry("p", 500, TransformOp::Wrap),
+    );
+    let entries = reg.for_route("/product/42");
+    assert_eq!(entries[0].route_pattern.as_deref(), Some("/product/:id"));
 }
 
 #[test]

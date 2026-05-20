@@ -1,0 +1,24 @@
+[package]
+name = "route-injection-example-host"
+version = "0.1.0"
+edition = "2024"
+
+[features]
+default = ["web", "server"]
+web    = ["dioxus/web", "dioxus-extism-frontend/web"]
+server = ["dioxus/server", "dioxus-extism-frontend/server"]
+
+[dependencies]
+dioxus-extism-frontend = { path = "../../../crates/dioxus-extism-frontend" }
+dioxus-extism-protocol = { path = "../../../crates/dioxus-extism-protocol" }
+dioxus                 = { workspace = true, features = ["router"] }
+tracing                = { workspace = true }
+
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+dioxus-extism-host = { path = "../../../crates/dioxus-extism-host" }
+anyhow             = { workspace = true }
+axum               = { workspace = true }
+tokio              = { workspace = true }
+
+[lints]
+workspace = true
