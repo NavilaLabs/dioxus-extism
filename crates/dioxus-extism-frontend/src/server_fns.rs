@@ -1,7 +1,6 @@
 use dioxus::prelude::*;
 use dioxus_extism_protocol::{
-    ClientCapabilities, ComponentResolution, OverrideMap, PluginId, RouteTransforms, SessionId,
-    SlotContent,
+    ClientCapabilities, ComponentResolution, OverrideMap, RouteTransforms, SessionId, SlotContent,
 };
 
 /// Fetch the current `OverrideMap` at boot time.
@@ -11,16 +10,16 @@ pub async fn get_override_map(
 ) -> Result<OverrideMap, ServerFnError> {
     use std::sync::Arc;
 
-    use axum::extract::Extension;
     use dioxus_extism_host::PluginRuntime;
 
     let _ = caps;
-    let result: Result<Extension<Arc<PluginRuntime>>, _> =
-        dioxus::fullstack::FullstackContext::extract().await;
-    match result {
-        Ok(Extension(runtime)) => Ok(runtime.override_map().await),
-        Err(_) => Ok(OverrideMap::default()),
-    }
+    let Some(runtime) = dioxus::fullstack::FullstackContext::current()
+        .and_then(|ctx| ctx.extension::<Arc<PluginRuntime>>())
+    else {
+        tracing::warn!("get_override_map: PluginRuntime not found in request extensions — add .layer(axum::Extension(runtime)) to your router");
+        return Ok(OverrideMap::default());
+    };
+    Ok(runtime.override_map().await)
 }
 
 /// Fetch slot contributions for a named slot.
@@ -32,22 +31,20 @@ pub async fn get_slot_content(
 ) -> Result<Vec<SlotContent>, ServerFnError> {
     use std::sync::Arc;
 
-    use axum::extract::Extension;
     use dioxus_extism_host::PluginRuntime;
     use dioxus_extism_protocol::SessionCtx;
 
-    let result: Result<Extension<Arc<PluginRuntime>>, _> =
-        dioxus::fullstack::FullstackContext::extract().await;
-    match result {
-        Ok(Extension(runtime)) => {
-            let session = SessionCtx { session_id, user_id: None, client: caps, caller: None };
-            runtime
-                .render_slot(&slot, &session)
-                .await
-                .map_err(|e| ServerFnError::new(e.to_string()))
-        }
-        Err(_) => Ok(vec![]),
-    }
+    let Some(runtime) = dioxus::fullstack::FullstackContext::current()
+        .and_then(|ctx| ctx.extension::<Arc<PluginRuntime>>())
+    else {
+        tracing::warn!("get_slot_content: PluginRuntime not found in request extensions — add .layer(axum::Extension(runtime)) to your router");
+        return Ok(vec![]);
+    };
+    let session = SessionCtx { session_id, user_id: None, client: caps, caller: None };
+    runtime
+        .render_slot(&slot, &session)
+        .await
+        .map_err(|e| ServerFnError::new(e.to_string()))
 }
 
 /// Resolve route transforms (before/wrap/after) for the current path.
@@ -62,18 +59,17 @@ pub async fn get_route_transforms(
 ) -> Result<RouteTransforms, ServerFnError> {
     use std::sync::Arc;
 
-    use axum::extract::Extension;
     use dioxus_extism_host::PluginRuntime;
     use dioxus_extism_protocol::SessionCtx;
 
-    let Extension(runtime): Extension<Arc<PluginRuntime>> =
-        dioxus::fullstack::FullstackContext::extract()
-            .await
-            .map_err(|e| {
-                ServerFnError::new(format!(
-                    "PluginRuntime not in request extensions — did you call with_plugin_runtime? ({e})"
-                ))
-            })?;
+    let Some(runtime) = dioxus::fullstack::FullstackContext::current()
+        .and_then(|ctx| ctx.extension::<Arc<PluginRuntime>>())
+    else {
+        tracing::warn!("get_route_transforms: PluginRuntime not found in request extensions — add .layer(axum::Extension(runtime)) to your router");
+        return Err(ServerFnError::new(
+            "PluginRuntime not in request extensions — add .layer(axum::Extension(runtime)) to your router",
+        ));
+    };
 
     let session = SessionCtx { session_id, user_id: None, client: caps, caller: None };
 
@@ -94,18 +90,17 @@ pub async fn get_plugin_state(
 ) -> Result<Option<serde_json::Value>, ServerFnError> {
     use std::sync::Arc;
 
-    use axum::extract::Extension;
     use dioxus_extism_host::PluginRuntime;
+    use dioxus_extism_protocol::PluginId;
 
-    let result: Result<Extension<Arc<PluginRuntime>>, _> =
-        dioxus::fullstack::FullstackContext::extract().await;
-    match result {
-        Ok(Extension(runtime)) => {
-            let pid = PluginId(plugin_id);
-            Ok(runtime.get_plugin_state(&pid, &key, &session_id).await)
-        }
-        Err(_) => Ok(None),
-    }
+    let Some(runtime) = dioxus::fullstack::FullstackContext::current()
+        .and_then(|ctx| ctx.extension::<Arc<PluginRuntime>>())
+    else {
+        tracing::warn!("get_plugin_state: PluginRuntime not found in request extensions");
+        return Ok(None);
+    };
+    let pid = PluginId(plugin_id);
+    Ok(runtime.get_plugin_state(&pid, &key, &session_id).await)
 }
 
 /// Resolve plugin transforms for a named component.
@@ -123,14 +118,17 @@ pub async fn get_component_resolution(
 ) -> Result<Option<ComponentResolution>, ServerFnError> {
     use std::sync::Arc;
 
-    use axum::extract::Extension;
     use dioxus_extism_host::PluginRuntime;
     use dioxus_extism_protocol::SessionCtx;
 
-    let Extension(runtime): Extension<Arc<PluginRuntime>> =
-        dioxus::fullstack::FullstackContext::extract()
-            .await
-            .map_err(|e| ServerFnError::new(format!("PluginRuntime not in request extensions — did you call with_plugin_runtime? ({e})")))?;
+    let Some(runtime) = dioxus::fullstack::FullstackContext::current()
+        .and_then(|ctx| ctx.extension::<Arc<PluginRuntime>>())
+    else {
+        tracing::warn!("get_component_resolution: PluginRuntime not found in request extensions — add .layer(axum::Extension(runtime)) to your router");
+        return Err(ServerFnError::new(
+            "PluginRuntime not in request extensions — add .layer(axum::Extension(runtime)) to your router",
+        ));
+    };
 
     let session = SessionCtx {
         session_id,
