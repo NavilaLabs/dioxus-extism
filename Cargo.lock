@@ -3090,6 +3090,32 @@ dependencies = [
 ]
 
 [[package]]
+name = "notes-plugin-host"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "axum",
+ "dioxus",
+ "dioxus-extism-frontend",
+ "dioxus-extism-host",
+ "dioxus-extism-protocol",
+ "serde",
+ "serde_json",
+ "tokio",
+ "tracing",
+]
+
+[[package]]
+name = "notes-plugin-plugin"
+version = "0.1.0"
+dependencies = [
+ "dioxus-extism-pdk",
+ "extism-pdk",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "nu-ansi-term"
 version = "0.50.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"

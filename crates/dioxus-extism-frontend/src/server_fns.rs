@@ -1,6 +1,7 @@
 use dioxus::prelude::*;
 use dioxus_extism_protocol::{
     ClientCapabilities, ComponentResolution, OverrideMap, RouteTransforms, SessionId, SlotContent,
+    ViewUpdate,
 };
 
 /// Fetch the current `OverrideMap` at boot time.
@@ -101,6 +102,42 @@ pub async fn get_plugin_state(
     };
     let pid = PluginId(plugin_id);
     Ok(runtime.get_plugin_state(&pid, &key, &session_id).await)
+}
+
+/// Route an interaction event to the owning plugin and return the updated view.
+///
+/// Called by `PluginViewRenderer` when the user interacts with an interactive element
+/// (button click, input change, etc.) embedded in a plugin view.
+#[server]
+pub async fn handle_plugin_interaction(
+    plugin_id: String,
+    handler_id: String,
+    event_data: serde_json::Value,
+    session_id: SessionId,
+    caps: ClientCapabilities,
+) -> Result<ViewUpdate, ServerFnError> {
+    use std::sync::Arc;
+
+    use dioxus_extism_host::PluginRuntime;
+    use dioxus_extism_protocol::{HandlerId, PluginId as PId, SessionCtx};
+
+    let Some(runtime) = dioxus::fullstack::FullstackContext::current()
+        .and_then(|ctx| ctx.extension::<Arc<PluginRuntime>>())
+    else {
+        tracing::warn!("handle_plugin_interaction: PluginRuntime not found in request extensions — add .layer(axum::Extension(runtime)) to your router");
+        return Err(ServerFnError::new(
+            "PluginRuntime not in request extensions — add .layer(axum::Extension(runtime)) to your router",
+        ));
+    };
+
+    let session = SessionCtx { session_id, user_id: None, client: caps, caller: None };
+    let pid = PId(plugin_id);
+    let hid = HandlerId(handler_id);
+
+    runtime
+        .handle_interaction(&pid, &hid, event_data, &session)
+        .await
+        .map_err(|e| ServerFnError::new(e.to_string()))
 }
 
 /// Resolve plugin transforms for a named component.

@@ -23,6 +23,7 @@ pub struct WebSessionProvider;
 pub struct DesktopSessionProvider;
 
 /// Read the current `SessionId` from context.
+#[must_use]
 pub fn use_session_id() -> Signal<SessionId> {
     use_context::<Signal<SessionId>>()
 }

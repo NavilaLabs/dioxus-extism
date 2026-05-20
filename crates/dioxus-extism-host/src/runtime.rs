@@ -393,6 +393,32 @@ impl PluginRuntime {
             .cloned()
     }
 
+    /// Write a key into a plugin's per-session state.
+    ///
+    /// Creates the session entry if it does not exist yet.
+    /// Use this before `render_slot` to pass per-request context to a plugin.
+    pub async fn set_plugin_state(
+        &self,
+        plugin_id: &PluginId,
+        session_id: &SessionId,
+        key: impl Into<String>,
+        value: serde_json::Value,
+    ) {
+        {
+            let mut states = self.session_states.write().await;
+            states
+                .entry(session_id.clone())
+                .or_default()
+                .entry(plugin_id.clone())
+                .or_default()
+                .insert(key.into(), value);
+        }
+        self.session_last_access
+            .write()
+            .await
+            .insert(session_id.clone(), std::time::Instant::now());
+    }
+
     /// Enable a previously disabled plugin.
     ///
     /// Uses a read lock on `plugins` — no registry rebuild required because
@@ -1891,14 +1917,19 @@ impl PluginRuntimeBuilder {
     }
 }
 
-/// Read the `manifest` export from a plugin source without registering host functions.
-/// Manifest exports are expected to be pure — no host function calls.
+/// Read the `manifest` export from a plugin source.
+///
+/// The manifest function is pure and never calls host functions, but the WASM binary
+/// may declare host imports at the module level. Stubs are provided to satisfy the
+/// linker without wiring up real state.
 async fn load_plugin_manifest(source: &PluginSource) -> Result<PluginManifest, PluginRuntimeError> {
     let bytes = fetch_and_verify(source).await?;
     let ext_manifest = extism::Manifest::new([extism::Wasm::data(bytes)]);
+    let stubs = host_functions::make_stub_host_functions();
     tokio::task::spawn_blocking(move || {
         let mut plugin = extism::PluginBuilder::new(ext_manifest)
             .with_wasi(true)
+            .with_functions(stubs)
             .build()
             .map_err(|e| PluginRuntimeError::CallFailed { source: e })?;
         let Json(manifest) = plugin

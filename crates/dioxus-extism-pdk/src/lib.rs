@@ -6,10 +6,11 @@ mod view;
 pub use extism_pdk;
 
 pub use dioxus_extism_protocol::{
-    ClientCapabilities, HandlerId, HookCall, HookResult, HostCapability, HostComponentRef,
-    NodeSelector, PluginEvent, PluginId, PluginManifest, PluginView, PriorityHint, RoutePattern,
-    Selector, SessionCtx, SessionId, SlotContent, SlotRegistration, StateScope,
-    TransformDeclaration, TransformInput, TransformOp, TransformOutput, ViewUpdate,
+    AttrValue, BoundEventHandler, ClientCapabilities, DomEvent, HandlerId, HookCall, HookResult,
+    HostCapability, HostComponentRef, NodeSelector, PluginEvent, PluginId, PluginManifest,
+    PluginView, PriorityHint, RoutePattern, Selector, SessionCtx, SessionId, SlotContent,
+    SlotRegistration, StateScope, TransformDeclaration, TransformInput, TransformOp,
+    TransformOutput, ViewElement, ViewUpdate,
 };
 pub use error::PdkError;
 pub use view::{div, element, incompatible, original_content, span, text, ViewBuilder};
@@ -17,12 +18,13 @@ pub use view::{div, element, incompatible, original_content, span, text, ViewBui
 /// Prelude for plugin authors — import everything with one `use`.
 pub mod prelude {
     pub use crate::{
-        ClientCapabilities, DioxusPlugin, EventSubscriber, HandlerId, HookCall, HookHandler,
-        HookResult, HostCapability, HostComponentRef, InteractionHandler, NodeSelector, OnLoad,
-        OnUnload, PdkError, PluginCtx, PluginEvent, PluginId, PluginManifest, PluginView,
-        PriorityHint, RoutePattern, Selector, SessionCtx, SessionId, SlotContent, SlotRegistration,
-        SlotProvider, StateScope, TransformDeclaration, TransformInput, TransformOp, TransformOutput,
-        TransformProvider, ViewUpdate, div, element, incompatible, original_content, span, text,
+        AttrValue, BoundEventHandler, ClientCapabilities, DioxusPlugin, DomEvent, EventSubscriber,
+        HandlerId, HookCall, HookHandler, HookResult, HostCapability, HostComponentRef,
+        InteractionHandler, NodeSelector, OnLoad, OnUnload, PdkError, PluginCtx, PluginEvent,
+        PluginId, PluginManifest, PluginView, PriorityHint, RoutePattern, Selector, SessionCtx,
+        SessionId, SlotContent, SlotRegistration, SlotProvider, StateScope, TransformDeclaration,
+        TransformInput, TransformOp, TransformOutput, TransformProvider, ViewElement, ViewUpdate,
+        div, element, incompatible, original_content, span, text,
     };
 }
 

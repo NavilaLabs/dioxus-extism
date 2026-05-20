@@ -2,15 +2,36 @@ use std::collections::HashMap;
 
 use dioxus::prelude::*;
 use dioxus_extism_protocol::{
-    AttrValue, ClientCapabilities, HostComponentRef, OverrideMap, PluginView, RouteTransforms,
-    SessionId, SlotContent, SsrRouteOutput, ViewElement, PROTOCOL_VERSION,
+    AttrValue, ClientCapabilities, DomEvent, HandlerId, HostComponentRef, OverrideMap, PluginId,
+    PluginView, RouteTransforms, SessionId, SlotContent, SsrRouteOutput, ViewElement, ViewUpdate,
+    PROTOCOL_VERSION,
 };
 
 use crate::server_fns::{
     get_component_resolution, get_override_map, get_plugin_state as server_get_plugin_state,
-    get_route_transforms, get_slot_content,
+    get_route_transforms, get_slot_content, handle_plugin_interaction,
 };
 use crate::session::use_session_id;
+
+// ── Plugin interaction context ────────────────────────────────────────────────
+
+/// Marker type: indicates we are inside a `PluginViewRenderer` subtree.
+///
+/// The root `PluginViewRenderer` provides this so nested instances know not to
+/// override the interaction context that was already established.
+#[derive(Clone, Copy)]
+struct InsidePluginTree;
+
+/// Context provided by the root `PluginViewRenderer` for interactive child elements.
+#[derive(Clone)]
+struct PluginInteractionCtx {
+    plugin_id: Option<PluginId>,
+    session_id: Signal<SessionId>,
+    /// Signal that holds the current view for this plugin's contribution.
+    /// Interaction handlers write to this to update the displayed view.
+    view_signal: Signal<PluginView>,
+    caps: ClientCapabilities,
+}
 
 // ── HostComponentRegistry ────────────────────────────────────────────────────
 
@@ -119,6 +140,7 @@ pub fn PluginSlot(
                         key: "{content.plugin_id.0}",
                         view: content.view,
                         session_id,
+                        plugin_id: Some(content.plugin_id),
                     }
                 }
             }
@@ -304,13 +326,41 @@ fn PluginAwareRouterInner(path: String, outlet: Element) -> Element {
 // ── PluginViewRenderer ────────────────────────────────────────────────────────
 
 /// Renders a `PluginView` tree into Dioxus elements.
+///
+/// The first (root) `PluginViewRenderer` in a given subtree creates a `view_signal`
+/// and provides `PluginInteractionCtx` so nested interactive elements (buttons, inputs)
+/// can update the view in place without prop drilling.  Subsequent nested calls detect
+/// that they are already inside a tree (via `InsidePluginTree` context) and skip
+/// creating a new signal or overriding the context.
 #[component]
 pub fn PluginViewRenderer(
     view: PluginView,
     session_id: Signal<SessionId>,
     #[props(default)] content_slot: Option<Element>,
+    #[props(default)] plugin_id: Option<PluginId>,
 ) -> Element {
-    match view {
+    // Always create a view signal so hooks are called unconditionally.
+    let view_signal = use_signal(|| view.clone());
+    let caps = try_use_context::<ClientCapabilities>().unwrap_or_default();
+
+    // Only the outermost PluginViewRenderer becomes the interaction context provider.
+    // Children inherit the root's context instead of creating a new one.
+    let already_inside = try_use_context::<InsidePluginTree>().is_some();
+    if !already_inside {
+        provide_context(InsidePluginTree);
+        provide_context(PluginInteractionCtx {
+            plugin_id,
+            session_id,
+            view_signal,
+            caps,
+        });
+    }
+
+    // Root reads from the signal so interactions can update it.
+    // Children render their passed `view` directly (they're part of the root's tree).
+    let render_view = if already_inside { view } else { view_signal.read().clone() };
+
+    match render_view {
         PluginView::Empty => rsx! {},
         PluginView::Text(t) => rsx! { "{t}" },
         PluginView::Fragment(children) => rsx! {
@@ -335,40 +385,178 @@ pub fn PluginViewRenderer(
     }
 }
 
+// ── Interactive sub-components ────────────────────────────────────────────────
+
+/// A button rendered by a plugin view that calls `handle_plugin_interaction` on click.
+#[component]
+fn InteractiveButton(
+    class: String,
+    id: String,
+    handler_id: HandlerId,
+    children: Element,
+) -> Element {
+    let ctx = try_use_context::<PluginInteractionCtx>();
+    rsx! {
+        button {
+            class: "{class}",
+            id: "{id}",
+            onclick: move |_| {
+                let ctx = ctx.clone();
+                let hid = handler_id.clone();
+                spawn(async move {
+                    let Some(mut ctx) = ctx else { return };
+                    let Some(pid) = ctx.plugin_id.clone() else { return };
+                    let sid = ctx.session_id.read().clone();
+                    match handle_plugin_interaction(
+                        pid.0,
+                        hid.0.clone(),
+                        serde_json::Value::Null,
+                        sid,
+                        ctx.caps.clone(),
+                    )
+                    .await
+                    {
+                        Ok(ViewUpdate { view: Some(new_view), .. }) => {
+                            *ctx.view_signal.write() = new_view;
+                        }
+                        Ok(_) => {}
+                        Err(e) => {
+                            tracing::error!("plugin interaction failed: {e}");
+                        }
+                    }
+                });
+            },
+            {children}
+        }
+    }
+}
+
+/// An input rendered by a plugin view that fires `handle_plugin_interaction` on each keystroke.
+///
+/// The event data sent to the plugin is `{"value": "<current input value>"}`.
+/// The view is not updated (the plugin stores the draft in session state instead).
+#[component]
+fn InteractiveInput(
+    class: String,
+    id: String,
+    placeholder: String,
+    value: String,
+    handler_id: HandlerId,
+) -> Element {
+    let ctx = try_use_context::<PluginInteractionCtx>();
+    rsx! {
+        input {
+            class: "{class}",
+            id: "{id}",
+            placeholder: "{placeholder}",
+            value: "{value}",
+            oninput: move |e| {
+                let ctx = ctx.clone();
+                let hid = handler_id.clone();
+                let val = e.value();
+                spawn(async move {
+                    let Some(ctx) = ctx else { return };
+                    let Some(pid) = ctx.plugin_id.clone() else { return };
+                    let sid = ctx.session_id.read().clone();
+                    let event_data = serde_json::json!({"value": val});
+                    if let Err(e) = handle_plugin_interaction(
+                        pid.0,
+                        hid.0.clone(),
+                        event_data,
+                        sid,
+                        ctx.caps.clone(),
+                    )
+                    .await
+                    {
+                        tracing::error!("plugin input interaction failed: {e}");
+                    }
+                });
+            },
+        }
+    }
+}
+
 #[allow(clippy::too_many_lines, clippy::needless_pass_by_value)]
 fn render_element(el: ViewElement, session_id: Signal<SessionId>, content_slot: Option<Element>) -> Element {
-    // Build attributes as a string map — Dioxus requires static attribute names,
-    // so we emit a data-encoded element for the generic case and handle common
-    // tags specially. For Phase 1 we emit a div with class forwarded.
-    let class = el
-        .attrs
+    let ViewElement { tag, attrs, handlers, children, .. } = el;
+
+    let str_attr = |name: &str| -> String {
+        attrs
+            .iter()
+            .find(|(k, _)| k == name)
+            .and_then(|(_, v)| if let AttrValue::String(s) = v { Some(s.clone()) } else { None })
+            .unwrap_or_default()
+    };
+
+    let class = str_attr("class");
+    let id = str_attr("id");
+    let value = str_attr("value");
+    let placeholder = str_attr("placeholder");
+
+    let click_handler: Option<HandlerId> = handlers
         .iter()
-        .find(|(k, _)| k == "class")
-        .and_then(|(_, v)| {
-            if let AttrValue::String(s) = v {
-                Some(s.clone())
-            } else {
-                None
-            }
-        })
-        .unwrap_or_default();
+        .find(|h| matches!(h.event, DomEvent::Click))
+        .map(|h| h.handler_id.clone());
 
-    let id = el
-        .attrs
+    let input_handler: Option<HandlerId> = handlers
         .iter()
-        .find(|(k, _)| k == "id")
-        .and_then(|(_, v)| {
-            if let AttrValue::String(s) = v {
-                Some(s.clone())
+        .find(|h| matches!(h.event, DomEvent::Input))
+        .map(|h| h.handler_id.clone());
+
+    let children_views = children;
+
+    match tag.as_str() {
+        "button" => {
+            if let Some(hid) = click_handler {
+                rsx! {
+                    InteractiveButton {
+                        class,
+                        id,
+                        handler_id: hid,
+                        for (i, child) in children_views.into_iter().enumerate() {
+                            PluginViewRenderer { key: "{i}", view: child, session_id }
+                        }
+                    }
+                }
             } else {
-                None
+                rsx! {
+                    button {
+                        class: "{class}",
+                        id: "{id}",
+                        for (i, child) in children_views.into_iter().enumerate() {
+                            PluginViewRenderer {
+                                key: "{i}",
+                                view: child,
+                                session_id,
+                                content_slot: content_slot.clone(),
+                            }
+                        }
+                    }
+                }
             }
-        })
-        .unwrap_or_default();
-
-    let children_views: Vec<PluginView> = el.children;
-
-    match el.tag.as_str() {
+        }
+        "input" => {
+            if let Some(hid) = input_handler {
+                rsx! {
+                    InteractiveInput {
+                        class,
+                        id,
+                        placeholder,
+                        value,
+                        handler_id: hid,
+                    }
+                }
+            } else {
+                rsx! {
+                    input {
+                        class: "{class}",
+                        id: "{id}",
+                        placeholder: "{placeholder}",
+                        value: "{value}",
+                    }
+                }
+            }
+        }
         "div" => rsx! {
             div {
                 class: "{class}",
@@ -439,9 +627,51 @@ fn render_element(el: ViewElement, session_id: Signal<SessionId>, content_slot: 
                 }
             }
         },
+        "h3" => rsx! {
+            h3 {
+                class: "{class}",
+                id: "{id}",
+                for (i, child) in children_views.into_iter().enumerate() {
+                    PluginViewRenderer {
+                        key: "{i}",
+                        view: child,
+                        session_id,
+                        content_slot: content_slot.clone(),
+                    }
+                }
+            }
+        },
+        "ul" => rsx! {
+            ul {
+                class: "{class}",
+                id: "{id}",
+                for (i, child) in children_views.into_iter().enumerate() {
+                    PluginViewRenderer {
+                        key: "{i}",
+                        view: child,
+                        session_id,
+                        content_slot: content_slot.clone(),
+                    }
+                }
+            }
+        },
+        "li" => rsx! {
+            li {
+                class: "{class}",
+                id: "{id}",
+                for (i, child) in children_views.into_iter().enumerate() {
+                    PluginViewRenderer {
+                        key: "{i}",
+                        view: child,
+                        session_id,
+                        content_slot: content_slot.clone(),
+                    }
+                }
+            }
+        },
         _ => rsx! {
             div {
-                "data-tag": "{el.tag}",
+                "data-tag": "{tag}",
                 class: "{class}",
                 id: "{id}",
                 for (i, child) in children_views.into_iter().enumerate() {

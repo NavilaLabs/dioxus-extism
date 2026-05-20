@@ -14,6 +14,8 @@ members = [
     "examples/tree-selector-example/plugin_a",
     "examples/tree-selector-example/plugin_b",
     "examples/tree-selector-example/host",
+    "examples/notes-plugin/plugin",
+    "examples/notes-plugin/host",
 ]
 resolver = "2"
 

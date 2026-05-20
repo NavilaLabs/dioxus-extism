@@ -77,6 +77,46 @@ pub fn make_host_functions(
     ]
 }
 
+/// Build no-op stub host functions for manifest-only plugin loading.
+///
+/// The manifest export is pure and never calls host functions, but the WASM binary
+/// declares them as imports. Extism validates all imports at instantiation time, so
+/// stubs are required to satisfy the linker even though they are never invoked.
+pub fn make_stub_host_functions() -> Vec<extism::Function> {
+    fn null_output(
+        plugin: &mut extism::CurrentPlugin,
+        _inputs: &[extism::Val],
+        outputs: &mut [extism::Val],
+        _ud: extism::UserData<()>,
+    ) -> Result<(), extism::Error> {
+        let handle = plugin.memory_new("null")?;
+        outputs[0] = plugin.memory_to_val(handle);
+        Ok(())
+    }
+    #[allow(clippy::unnecessary_wraps)]
+    fn no_output(
+        _plugin: &mut extism::CurrentPlugin,
+        _inputs: &[extism::Val],
+        _outputs: &mut [extism::Val],
+        _ud: extism::UserData<()>,
+    ) -> Result<(), extism::Error> {
+        Ok(())
+    }
+    let ud = extism::UserData::new(());
+    vec![
+        extism::Function::new("dx_state_get",         [extism::PTR],             [extism::PTR], ud.clone(), null_output),
+        extism::Function::new("dx_state_set",         [extism::PTR, extism::PTR],            [], ud.clone(), no_output),
+        extism::Function::new("dx_state_delete",      [extism::PTR],                         [], ud.clone(), no_output),
+        extism::Function::new("dx_global_state_get",  [extism::PTR],             [extism::PTR], ud.clone(), null_output),
+        extism::Function::new("dx_global_state_set",  [extism::PTR, extism::PTR],            [], ud.clone(), no_output),
+        extism::Function::new("dx_plugin_state_get",  [extism::PTR, extism::PTR],[extism::PTR], ud.clone(), null_output),
+        extism::Function::new("dx_emit_event",        [extism::PTR],                         [], ud.clone(), no_output),
+        extism::Function::new("dx_log",               [extism::PTR, extism::PTR],            [], ud.clone(), no_output),
+        extism::Function::new("dx_http_fetch",        [extism::PTR],             [extism::PTR], ud.clone(), null_output),
+        extism::Function::new("dx_invoke",            [extism::PTR, extism::PTR],[extism::PTR], ud,          null_output),
+    ]
+}
+
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
 fn extract_ctx(user_data: &extism::UserData<CallCtx>) -> Result<Arc<Mutex<CallCtx>>, extism::Error> {

@@ -121,6 +121,35 @@ Expected: an activity feed card with "Latest activity / User alice posted a comm
 
 ---
 
+### notes-plugin
+
+A plugin that demonstrates `dx_invoke` — calling host-registered business logic from inside a WASM plugin. The plugin renders a per-article notes section. It reads a `current_page` key from its session state (set by the host before calling `render_slot`), fetches notes from a host-owned in-memory store via `dx_invoke("get_notes", …)`, and lets the user add new notes via `dx_invoke("add_note", …)`. Interactions (`update_draft` on every keystroke, `submit_note` on button click) are handled inside the plugin and return a fresh view without a full page reload.
+
+**1. Build the plugin**
+
+```bash
+cargo build -p notes-plugin-plugin --target wasm32-unknown-unknown --release
+```
+
+**2. Start the host**
+
+```bash
+cd examples/notes-plugin/host
+dx serve
+```
+
+**3. Open the browser**
+
+Navigate to [http://localhost:8080](http://localhost:8080), then click any article link.
+
+Expected on an article page:
+- Static article content rendered by the host
+- A "Notes" section below the `<hr>`, contributed entirely by the plugin
+- An input field + "Add note" button; typing and clicking adds notes that persist in the host store for the session
+- Navigating to a different article shows that article's notes independently
+
+---
+
 ## Custom bind address / port
 
 Pass `--addr` and `--port` to `dx serve`:
@@ -150,6 +179,7 @@ dioxus-extism/
 ├── examples/
 │   ├── hello-plugin/             # minimal slot example
 │   ├── route-injection-example/  # route wrap + inject-after example
-│   └── tree-selector-example/    # two plugins, Within transform
+│   ├── tree-selector-example/    # two plugins, Within transform
+│   └── notes-plugin/             # dx_invoke + interactive slot (input/button)
 └── dioxus-extism/                # thin re-export crate
 ```
