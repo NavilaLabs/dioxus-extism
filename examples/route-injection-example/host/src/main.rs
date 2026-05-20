@@ -48,9 +48,8 @@ fn server_main() {
                 .layer(axum::Extension(runtime));
 
             tracing::info!("listening on {addr}");
-            let listener = tokio::net::TcpListener::bind(addr)
-                .await
-                .expect("bind");
+            let listener = tokio::net::TcpListener::bind(addr).await
+                .unwrap_or_else(|e| panic!("bind {addr}: {e} — set IP / PORT env vars (e.g. IP=0.0.0.0 PORT=8081)"));
             axum::serve(listener, router).await.expect("serve");
         });
 }
