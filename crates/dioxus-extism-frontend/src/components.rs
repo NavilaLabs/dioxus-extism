@@ -3,11 +3,12 @@ use std::collections::HashMap;
 use dioxus::prelude::*;
 use dioxus_extism_protocol::{
     AttrValue, ClientCapabilities, HostComponentRef, OverrideMap, PluginView, RouteTransforms,
-    SessionId, ViewElement, PROTOCOL_VERSION,
+    SessionId, SlotContent, SsrRouteOutput, ViewElement, PROTOCOL_VERSION,
 };
 
 use crate::server_fns::{
-    get_component_resolution, get_override_map, get_route_transforms, get_slot_content,
+    get_component_resolution, get_override_map, get_plugin_state as server_get_plugin_state,
+    get_route_transforms, get_slot_content,
 };
 use crate::session::use_session_id;
 
@@ -454,6 +455,77 @@ fn render_element(el: ViewElement, session_id: Signal<SessionId>, content_slot: 
             }
         },
     }
+}
+
+// ── SSR components ────────────────────────────────────────────────────────────
+
+/// Provides pre-fetched `SsrRouteOutput` as context for SSR rendering.
+///
+/// Wrap your SSR route handler's render tree with this component after calling
+/// `PluginRuntime::ssr_render_route`. Child components can then use `PluginSlotSsr`
+/// to render slot content without additional async calls.
+#[component]
+pub fn SsrPluginDataProvider(output: SsrRouteOutput, children: Element) -> Element {
+    provide_context(output);
+    rsx! { {children} }
+}
+
+/// Renders a named slot from pre-fetched SSR data.
+///
+/// Must be used inside a `SsrPluginDataProvider`. Falls back to an empty element
+/// if the slot has no contributions or the SSR context is not available.
+#[component]
+pub fn PluginSlotSsr(name: String) -> Element {
+    let output = try_use_context::<SsrRouteOutput>();
+    let session_id = use_session_id();
+
+    let contents: Vec<SlotContent> = output
+        .and_then(|o| o.slots.get(&name).cloned())
+        .unwrap_or_default();
+
+    rsx! {
+        for content in contents {
+            PluginViewRenderer {
+                key: "{content.plugin_id.0}",
+                view: content.view,
+                session_id,
+                content_slot: None,
+            }
+        }
+    }
+}
+
+// ── use_plugin_state ──────────────────────────────────────────────────────────
+
+/// Subscribe to one key in a plugin's session state.
+///
+/// Fetches the value via a server function and returns a `ReadOnlySignal<Option<T>>`.
+/// The signal is `None` while loading, or if the key is absent or deserialisation fails.
+pub fn use_plugin_state<T>(
+    plugin_id: impl Into<String>,
+    key: impl Into<String>,
+) -> ReadSignal<Option<T>>
+where
+    T: serde::de::DeserializeOwned + Clone + PartialEq + Send + Sync + 'static,
+{
+    let pid = plugin_id.into();
+    let key = key.into();
+    let session_id = use_session_id();
+
+    let resource = use_resource(move || {
+        let pid = pid.clone();
+        let key = key.clone();
+        let sid = session_id.read().clone();
+        async move {
+            server_get_plugin_state(pid, key, sid)
+                .await
+                .ok()
+                .flatten()
+                .and_then(|v| serde_json::from_value::<T>(v).ok())
+        }
+    });
+
+    use_memo(move || resource.read().as_ref().and_then(Clone::clone)).into()
 }
 
 fn render_host_component(

@@ -108,6 +108,8 @@ pub struct TransformRegistry {
     slots: HashMap<String, Vec<TransformEntry>>,
     data_slots: HashMap<String, Vec<TransformEntry>>,
     routes: Vec<(RoutePattern, TransformEntry)>,
+    /// Within-transforms: `(outer_selector, inner_node_selector, entry)`, sorted priority-desc.
+    within: Vec<(dioxus_extism_protocol::Selector, dioxus_extism_protocol::NodeSelector, TransformEntry)>,
 }
 
 impl TransformRegistry {
@@ -167,6 +169,31 @@ impl TransformRegistry {
             .collect()
     }
 
+    /// Register a within-transform, maintaining priority-descending order.
+    pub fn insert_within(
+        &mut self,
+        outer: dioxus_extism_protocol::Selector,
+        inner: dioxus_extism_protocol::NodeSelector,
+        entry: TransformEntry,
+    ) {
+        self.within.push((outer, inner, entry));
+        self.within.sort_by_key(|e| std::cmp::Reverse(e.2.priority));
+    }
+
+    /// Returns `(NodeSelector, TransformEntry)` pairs for all within-transforms whose
+    /// outer selector matches `outer`, in priority-descending order.
+    #[must_use]
+    pub fn within_for_outer(
+        &self,
+        outer: &dioxus_extism_protocol::Selector,
+    ) -> Vec<(dioxus_extism_protocol::NodeSelector, TransformEntry)> {
+        self.within
+            .iter()
+            .filter(|(o, _, _)| selectors_equal(o, outer))
+            .map(|(_, inner, entry)| (inner.clone(), entry.clone()))
+            .collect()
+    }
+
     /// All component names that have at least one registered transform.
     pub fn all_component_names(&self) -> HashSet<&str> {
         self.components.keys().map(String::as_str).collect()
@@ -208,6 +235,7 @@ impl InvocationRegistry {
         }
     }
 
+    #[tracing::instrument(skip(self, args, session), fields(invocation = name))]
     pub(crate) async fn call(
         &self,
         name: &str,
@@ -279,16 +307,126 @@ pub struct PluginRuntime {
     pub(crate) plugins: RwLock<IndexMap<PluginId, LoadedPlugin>>,
     pub(crate) global_states: Arc<RwLock<GlobalStateMap>>,
     pub(crate) session_states: Arc<RwLock<SessionStateMap>>,
+    /// Last time each session's state was read or written. Used for TTL eviction.
+    pub(crate) session_last_access: Arc<RwLock<HashMap<SessionId, std::time::Instant>>>,
     pub(crate) event_bus: RwLock<EventBus>,
     pub(crate) registries: RwLock<Registries>,
     pub(crate) invocation_registry: Arc<InvocationRegistry>,
     pub(crate) override_map_tx: broadcast::Sender<OverrideMap>,
+    pub(crate) persistence: Option<Arc<dyn StatePersistenceProvider>>,
 }
 
 impl PluginRuntime {
     /// Returns the cached `OverrideMap` without recomputation.
     pub async fn override_map(&self) -> OverrideMap {
         self.registries.read().await.override_map.clone()
+    }
+
+    /// Pre-fetch all plugin contributions for a route in preparation for SSR.
+    ///
+    /// Calls all async plugin operations up front so the synchronous
+    /// `dioxus_ssr::render` pass can run without async context.
+    ///
+    /// # Errors
+    /// Returns `PluginRuntimeError` if any registry lock fails.
+    pub async fn ssr_render_route(
+        &self,
+        path: &str,
+        session: &SessionCtx,
+    ) -> Result<dioxus_extism_protocol::SsrRouteOutput, PluginRuntimeError> {
+        use dioxus_extism_protocol::{SsrComponentResolution, SsrRouteOutput, SsrRouteTransforms};
+
+        // Route transforms.
+        let rt = self.render_route_transforms(path, session).await?;
+        let route_transforms = SsrRouteTransforms {
+            before: rt.before,
+            wrap: rt.wrap,
+            after: rt.after,
+        };
+
+        // All registered slot names.
+        let slot_names: Vec<String> = {
+            let regs = self.registries.read().await;
+            regs.slots.0.keys().cloned().collect()
+        };
+        let mut slots = std::collections::HashMap::new();
+        for name in &slot_names {
+            let content = self.render_slot(name, session).await?;
+            slots.insert(name.clone(), content);
+        }
+
+        // All registered component names.
+        let component_names: Vec<String> = {
+            let regs = self.registries.read().await;
+            regs.transforms.all_component_names().into_iter().map(str::to_owned).collect()
+        };
+        let mut components = std::collections::HashMap::new();
+        for name in &component_names {
+            let resolution = self
+                .resolve_component(name, serde_json::Value::Null, session)
+                .await?
+                .map(|r| SsrComponentResolution {
+                    before: r.before,
+                    replacement: r.replacement,
+                    after: r.after,
+                });
+            components.insert(name.clone(), resolution);
+        }
+
+        Ok(SsrRouteOutput { route_transforms, slots, components })
+    }
+
+    /// Read one key from a plugin's session state.
+    ///
+    /// Returns `None` if the session or key does not exist.
+    pub async fn get_plugin_state(
+        &self,
+        plugin_id: &PluginId,
+        key: &str,
+        session_id: &SessionId,
+    ) -> Option<serde_json::Value> {
+        let states = self.session_states.read().await;
+        states
+            .get(session_id)
+            .and_then(|s| s.get(plugin_id))
+            .and_then(|p| p.get(key))
+            .cloned()
+    }
+
+    /// Enable a previously disabled plugin.
+    ///
+    /// Uses a read lock on `plugins` — no registry rebuild required because
+    /// `enabled` is checked at dispatch time.
+    ///
+    /// # Errors
+    /// Returns `PluginRuntimeError::PluginNotFound` if the plugin is not registered.
+    #[allow(clippy::significant_drop_tightening)]
+    pub fn enable_plugin(&self, id: &PluginId) -> Result<(), PluginRuntimeError> {
+        let plugins = self.plugins.blocking_read();
+        plugins
+            .get(id)
+            .ok_or_else(|| PluginRuntimeError::PluginNotFound(id.clone()))?
+            .enabled
+            .store(true, Ordering::Relaxed);
+        Ok(())
+    }
+
+    /// Disable a plugin so it is skipped at dispatch time.
+    ///
+    /// Uses a read lock on `plugins` — no registry rebuild required because
+    /// `enabled` is checked at dispatch time.
+    ///
+    /// # Errors
+    /// Returns `PluginRuntimeError::PluginNotFound` if the plugin is not registered.
+    #[allow(clippy::significant_drop_tightening)]
+    pub fn disable_plugin(&self, id: &PluginId) -> Result<(), PluginRuntimeError> {
+        let plugins = self.plugins.blocking_read();
+        plugins
+            .get(id)
+            .ok_or_else(|| PluginRuntimeError::PluginNotFound(id.clone()))?
+            .enabled
+            .store(false, Ordering::Relaxed);
+        Ok(())
     }
 
     /// Subscribe to `OverrideMap` change notifications (used by the SSE endpoint).
@@ -303,6 +441,7 @@ impl PluginRuntime {
     ///
     /// # Errors
     /// Returns `PluginRuntimeError` if locking the registry fails.
+    #[tracing::instrument(skip(self, session), fields(slot = slot_name))]
     pub async fn render_slot(
         &self,
         slot_name: &str,
@@ -381,6 +520,25 @@ impl PluginRuntime {
             }
         }
 
+        // Step 3: apply Within-transforms to each slot item's view.
+        let within_entries = {
+            let regs = self.registries.read().await;
+            regs.transforms
+                .within_for_outer(&dioxus_extism_protocol::Selector::Slot(slot_name.into()))
+        };
+        if !within_entries.is_empty() {
+            let ctx = TransformContext {
+                slot_name: Some(slot_name.into()),
+                client: session.client.clone(),
+                ..Default::default()
+            };
+            for content in &mut results {
+                content.view = self
+                    .apply_within_entries(&within_entries, content.view.clone(), ctx.clone(), session)
+                    .await;
+            }
+        }
+
         Ok(results)
     }
 
@@ -391,6 +549,7 @@ impl PluginRuntime {
     ///
     /// # Errors
     /// Returns `PluginRuntimeError` if context serialisation fails.
+    #[tracing::instrument(skip(self, context, session), fields(hook = hook_name))]
     pub async fn run_hook<T>(
         &self,
         hook_name: &str,
@@ -457,6 +616,7 @@ impl PluginRuntime {
     ///
     /// # Errors
     /// Returns `PluginRuntimeError` if the plugin is not found or the call fails.
+    #[tracing::instrument(skip(self, event_data, session), fields(plugin = %plugin_id.0, handler = %handler_id.0))]
     pub async fn handle_interaction(
         &self,
         plugin_id: &PluginId,
@@ -615,6 +775,7 @@ impl PluginRuntime {
     ///
     /// # Errors
     /// Returns `PluginRuntimeError` if locking the registry fails.
+    #[tracing::instrument(skip(self, session), fields(path))]
     pub async fn render_route_transforms(
         &self,
         path: &str,
@@ -775,6 +936,287 @@ impl PluginRuntime {
         views
     }
 
+    /// Apply all `Within` transforms registered for `outer_selector` to `view`.
+    ///
+    /// Returns the unchanged view if no within-transforms are registered (fast path).
+    ///
+    /// # Errors
+    /// Returns `PluginRuntimeError` if locking the registry fails.
+    pub async fn apply_tree_transforms(
+        &self,
+        outer_selector: &dioxus_extism_protocol::Selector,
+        view: PluginView,
+        context: TransformContext,
+        session: &SessionCtx,
+    ) -> Result<PluginView, PluginRuntimeError> {
+        let entries = {
+            let regs = self.registries.read().await;
+            regs.transforms.within_for_outer(outer_selector)
+        };
+        Ok(self.apply_within_entries(&entries, view, context, session).await)
+    }
+
+    async fn apply_within_entries(
+        &self,
+        entries: &[(dioxus_extism_protocol::NodeSelector, TransformEntry)],
+        view: PluginView,
+        context: TransformContext,
+        session: &SessionCtx,
+    ) -> PluginView {
+        if entries.is_empty() {
+            return view;
+        }
+        let mut current = view;
+        for (node_selector, entry) in entries {
+            let pool = {
+                let plugins = self.plugins.read().await;
+                match plugins.get(&entry.plugin_id) {
+                    Some(p)
+                        if p.enabled.load(Ordering::Relaxed)
+                            && Self::is_compatible(p, &session.client) =>
+                    {
+                        p.pool.clone()
+                    }
+                    _ => continue,
+                }
+            };
+            current = traverse_and_apply(
+                current,
+                node_selector.clone(),
+                entry.op.clone(),
+                entry.transform_fn.clone(),
+                pool,
+                context.clone(),
+                session.clone(),
+            )
+            .await;
+        }
+        current
+    }
+
+    /// Reload a plugin from a new source, following Pattern 3 from CLAUDE.md.
+    ///
+    /// Steps (in order):
+    /// 1. Build the new `Pool` outside the write lock (WASM compilation is expensive).
+    /// 2. Call `on_unload` on the old pool outside the write lock — best effort.
+    /// 3. Atomically swap the plugin entry under a single write lock, rebuild registries,
+    ///    and bump the override-map version.
+    /// 4. Broadcast the new `OverrideMap` after both locks are released.
+    ///
+    /// # Errors
+    /// Returns an error if the source cannot be fetched, the manifest is incompatible,
+    /// or pool construction fails.
+    #[allow(clippy::too_many_lines, clippy::significant_drop_tightening)]
+    pub async fn reload_plugin(
+        &self,
+        id: &PluginId,
+        source: PluginSource,
+        config: PluginInstallConfig,
+    ) -> Result<(), PluginRuntimeError> {
+        // Step 1: build the new pool outside any write lock.
+        let new_manifest = load_plugin_manifest(&source).await?;
+
+        if new_manifest.min_protocol_version > PROTOCOL_VERSION {
+            return Err(PluginRuntimeError::ProtocolVersionMismatch {
+                required: new_manifest.min_protocol_version,
+                host: PROTOCOL_VERSION,
+            });
+        }
+
+        let (session_states, global_states, session_last_access, invocation_registry, persistence) = {
+            let plugins = self.plugins.read().await;
+            let p = plugins
+                .get(id)
+                .ok_or_else(|| PluginRuntimeError::PluginNotFound(id.clone()))?;
+            let ctx = p.ctx_arc.lock().map_err(|_| PluginRuntimeError::Pool("ctx mutex poisoned".into()))?;
+            (
+                ctx.session_states.clone(),
+                ctx.global_states.clone(),
+                ctx.session_last_access.clone(),
+                ctx.invocation_registry.clone(),
+                ctx.persistence.clone(),
+            )
+        };
+
+        let mut granted_invocations = HashSet::new();
+        let mut granted_global_read = HashSet::new();
+        let mut granted_global_write = HashSet::new();
+        let mut granted_http_hosts: Vec<String> = Vec::new();
+        for cap in &new_manifest.host_capabilities {
+            match cap {
+                HostCapability::Invoke { names } => {
+                    for name in names {
+                        granted_invocations.insert(name.clone());
+                    }
+                }
+                HostCapability::GlobalStateRead { keys } => {
+                    granted_global_read.extend(keys.iter().cloned());
+                }
+                HostCapability::GlobalStateWrite { keys } => {
+                    granted_global_write.extend(keys.iter().cloned());
+                }
+                HostCapability::Http { allowed_hosts } => {
+                    granted_http_hosts.extend(allowed_hosts.iter().cloned());
+                }
+                _ => {}
+            }
+        }
+
+        let new_ctx = CallCtx {
+            caller: new_manifest.id.clone(),
+            session_states,
+            session_last_access,
+            global_states,
+            invocation_registry: invocation_registry.clone(),
+            persistence,
+            granted_invocations,
+            granted_global_read,
+            granted_global_write,
+            granted_http_hosts,
+        };
+        let user_data = extism::UserData::new(new_ctx);
+        let new_ctx_arc = user_data
+            .get()
+            .map_err(|e| PluginRuntimeError::Pool(format!("UserData::get failed: {e}")))?;
+
+        let host_fns = make_host_functions(user_data.clone());
+
+        let pool_size = config
+            .pool_size
+            .unwrap_or_else(|| std::thread::available_parallelism().map_or(4, usize::from));
+        let bytes = fetch_and_verify(&source).await?;
+        let ext_manifest = extism::Manifest::new([extism::Wasm::data(bytes)]);
+        let fns = host_fns;
+        let new_pool = extism::Pool::new_from_builder(
+            move || {
+                extism::PluginBuilder::new(ext_manifest.clone())
+                    .with_wasi(true)
+                    .with_functions(fns.clone())
+                    .build()
+            },
+            extism::PoolBuilder::default().with_max_instances(pool_size),
+        );
+
+        // Call on_load on the new pool before registering — failure aborts reload.
+        let has_on_load = new_pool
+            .function_exists("on_load", Duration::from_secs(5))
+            .map_err(|e| PluginRuntimeError::CallFailed { source: e })?;
+        if has_on_load {
+            let pool_clone = new_pool.clone();
+            let init_session = SessionCtx {
+                session_id: SessionId("__init__".into()),
+                user_id: None,
+                client: ClientCapabilities {
+                    protocol_version: PROTOCOL_VERSION,
+                    app_version: 0,
+                    registered_host_components: vec![],
+                },
+                caller: None,
+            };
+            let init_clone = init_session.clone();
+            tokio::task::spawn_blocking(move || {
+                host_functions::set_call_session(init_clone.session_id.clone(), init_clone.client.clone());
+                let mut p = pool_clone
+                    .get(Duration::from_secs(5))
+                    .map_err(|e| PluginRuntimeError::CallFailed { source: e })?
+                    .ok_or_else(|| PluginRuntimeError::Pool("timeout on on_load during reload".into()))?;
+                p.call::<Json<SessionCtx>, ()>("on_load", Json(init_session))
+                    .map_err(|e| PluginRuntimeError::CallFailed { source: e })
+            })
+            .await
+            .map_err(|e| PluginRuntimeError::TaskPanic(e.to_string()))??;
+        }
+
+        // Step 2: call on_unload on the OLD pool outside the write lock — best effort.
+        {
+            let plugins = self.plugins.read().await;
+            if let Some(old) = plugins.get(id) {
+                let has_on_unload = old
+                    .pool
+                    .function_exists("on_unload", Duration::from_secs(5))
+                    .unwrap_or(false);
+                if has_on_unload {
+                    let pool_clone = old.pool.clone();
+                    let _ = tokio::task::spawn_blocking(move || {
+                        if let Ok(Some(mut p)) = pool_clone.get(Duration::from_secs(5)) {
+                            let _ = p.call::<(), ()>("on_unload", ());
+                        }
+                    })
+                    .await;
+                }
+            }
+        }
+
+        // Step 3: single write lock — swap, rebuild registries, bump version.
+        let new_map = {
+            let mut plugins = self.plugins.write().await;
+            let mut regs = self.registries.write().await;
+            plugins.insert(
+                id.clone(),
+                LoadedPlugin {
+                    manifest: new_manifest,
+                    pool: new_pool,
+                    enabled: AtomicBool::new(true),
+                    config,
+                    ctx_arc: new_ctx_arc,
+                },
+            );
+            let mut new_regs = Self::build_registries(&plugins);
+            new_regs.override_map.version = regs.override_map.version + 1;
+            *regs = new_regs;
+            regs.override_map.clone()
+        };
+
+        // Step 4: broadcast after both locks are released.
+        let _ = self.override_map_tx.send(new_map);
+        Ok(())
+    }
+
+    /// Unload a plugin, calling its `on_unload` export if present.
+    ///
+    /// After removal the registries are rebuilt and subscribers are notified.
+    ///
+    /// # Errors
+    /// Returns `PluginRuntimeError::PluginNotFound` if the plugin is not registered.
+    #[allow(clippy::significant_drop_tightening)]
+    pub async fn unload_plugin(&self, id: &PluginId) -> Result<(), PluginRuntimeError> {
+        // Call on_unload outside the write lock — best effort.
+        {
+            let plugins = self.plugins.read().await;
+            if let Some(p) = plugins.get(id) {
+                let has_on_unload = p
+                    .pool
+                    .function_exists("on_unload", Duration::from_secs(5))
+                    .unwrap_or(false);
+                if has_on_unload {
+                    let pool_clone = p.pool.clone();
+                    let _ = tokio::task::spawn_blocking(move || {
+                        if let Ok(Some(mut p)) = pool_clone.get(Duration::from_secs(5)) {
+                            let _ = p.call::<(), ()>("on_unload", ());
+                        }
+                    })
+                    .await;
+                }
+            }
+        }
+
+        // Single write lock — remove, rebuild, bump version.
+        let new_map = {
+            let mut plugins = self.plugins.write().await;
+            if plugins.swap_remove(id).is_none() {
+                return Err(PluginRuntimeError::PluginNotFound(id.clone()));
+            }
+            let mut regs = self.registries.write().await;
+            let mut new_regs = Self::build_registries(&plugins);
+            new_regs.override_map.version = regs.override_map.version + 1;
+            *regs = new_regs;
+            regs.override_map.clone()
+        };
+
+        let _ = self.override_map_tx.send(new_map);
+        Ok(())
+    }
+
     const fn is_compatible(plugin: &LoadedPlugin, client: &ClientCapabilities) -> bool {
         plugin.manifest.min_protocol_version <= client.protocol_version
             && plugin.manifest.min_app_version <= client.app_version
@@ -837,6 +1279,9 @@ impl PluginRuntime {
                         route_patterns.push(pattern.clone());
                         transforms.insert_route(pattern.clone(), entry);
                     }
+                    Selector::Within { outer, inner } => {
+                        transforms.insert_within(*outer.clone(), inner.clone(), entry);
+                    }
                     _ => {}
                 }
             }
@@ -881,6 +1326,170 @@ impl PluginRuntime {
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
+/// Compare two `Selector` values for structural equality (enough for within-lookup).
+///
+/// Only handles the selectors that appear as outer targets in practice; returns false
+/// for uncommon forms (Any, Within-as-outer) so they never match accidentally.
+fn selectors_equal(a: &dioxus_extism_protocol::Selector, b: &dioxus_extism_protocol::Selector) -> bool {
+    use dioxus_extism_protocol::Selector;
+    match (a, b) {
+        (Selector::Slot(x), Selector::Slot(y))
+        | (Selector::Component(x), Selector::Component(y))
+        | (Selector::DataPluginSlot(x), Selector::DataPluginSlot(y)) => x == y,
+        (Selector::Route(x), Selector::Route(y)) => x == y,
+        _ => false,
+    }
+}
+
+/// Recursively apply a within-transform entry to all matching nodes in `view`.
+///
+/// Uses `Box::pin` for async recursion. On plugin call failure the matched node is
+/// left unchanged (error isolation) and traversal continues.
+fn traverse_and_apply(
+    view: PluginView,
+    selector: dioxus_extism_protocol::NodeSelector,
+    op: TransformOp,
+    transform_fn: String,
+    pool: extism::Pool,
+    context: TransformContext,
+    session: SessionCtx,
+) -> futures::future::BoxFuture<'static, PluginView> {
+    use dioxus_extism_protocol::ViewElement;
+    Box::pin(async move {
+        let recursive = crate::tree::is_recursive_selector(&selector);
+        let d = WithinDispatch {
+            selector: &selector,
+            op: &op,
+            transform_fn: &transform_fn,
+            pool: pool.clone(),
+            context: &context,
+            session: &session,
+            recursive,
+        };
+        match view {
+            PluginView::Element(el) => {
+                let len = el.children.len();
+                let mut new_children = Vec::with_capacity(len);
+                for child in el.children {
+                    apply_within_op_to_child(child, &d, &mut new_children).await;
+                }
+                PluginView::Element(ViewElement { children: new_children, ..el })
+            }
+            PluginView::Fragment(children) => {
+                let mut new_children = Vec::with_capacity(children.len());
+                for child in children {
+                    apply_within_op_to_child(child, &d, &mut new_children).await;
+                }
+                PluginView::Fragment(new_children)
+            }
+            other => other,
+        }
+    })
+}
+
+/// Bundles the constant parameters for a within-transform dispatch pass.
+struct WithinDispatch<'a> {
+    selector: &'a dioxus_extism_protocol::NodeSelector,
+    op: &'a TransformOp,
+    transform_fn: &'a str,
+    pool: extism::Pool,
+    context: &'a TransformContext,
+    session: &'a SessionCtx,
+    recursive: bool,
+}
+
+/// Handle one child node: match, apply op, or recurse (if recursive selector).
+async fn apply_within_op_to_child(
+    child: PluginView,
+    d: &WithinDispatch<'_>,
+    out: &mut Vec<PluginView>,
+) {
+    use dioxus_extism_protocol::AttrValue;
+    let selector = d.selector;
+    let op = d.op;
+    let transform_fn = d.transform_fn;
+    let pool = d.pool.clone();
+    let context = d.context;
+    let session = d.session;
+    let recursive = d.recursive;
+    if crate::tree::node_matches(&child, selector) {
+        // AddClass / SetAttr modify the node directly; no plugin call needed.
+        match op {
+            TransformOp::AddClass(cls) => {
+                out.push(crate::tree::add_class_to_view(child, cls.clone()));
+                return;
+            }
+            TransformOp::SetAttr(k, v) => {
+                out.push(crate::tree::set_attr_on_view(child, k.clone(), AttrValue::String({
+                    if let AttrValue::String(s) = v { s.clone() } else { String::new() }
+                })));
+                return;
+            }
+            _ => {}
+        }
+
+        let original = match op {
+            TransformOp::Replace | TransformOp::WrapNode => Some(child.clone()),
+            _ => None,
+        };
+        let input = TransformInput {
+            original,
+            context: context.clone(),
+            session: session.clone(),
+        };
+        match call_export::<TransformInput, TransformOutput>(
+            pool.clone(),
+            transform_fn.to_string(),
+            input,
+            session.clone(),
+        )
+        .await
+        {
+            Ok(out_t) => match op {
+                TransformOp::InsertBefore => {
+                    out.push(out_t.view);
+                    out.push(child);
+                }
+                TransformOp::InsertAfter => {
+                    out.push(child);
+                    out.push(out_t.view);
+                }
+                TransformOp::Replace => {
+                    out.push(out_t.view);
+                }
+                TransformOp::WrapNode => {
+                    out.push(crate::tree::resolve_target_in_view(out_t.view, child));
+                }
+                _ => out.push(child),
+            },
+            Err(e) => {
+                tracing::warn!(
+                    transform_fn = transform_fn,
+                    error = %e,
+                    "within-transform call failed, leaving node unchanged"
+                );
+                out.push(child);
+            }
+        }
+    } else if recursive {
+        // Non-matching child — recurse into it.
+        let transformed = traverse_and_apply(
+            child,
+            selector.clone(),
+            op.clone(),
+            transform_fn.to_string(),
+            pool,
+            context.clone(),
+            session.clone(),
+        )
+        .await;
+        out.push(transformed);
+    } else {
+        out.push(child);
+    }
+}
+
+
 /// Returns `true` if `view` contains a `HostComponent("__content__")` at any depth.
 fn view_contains_content_placeholder(view: &PluginView) -> bool {
     match view {
@@ -897,6 +1506,7 @@ fn view_contains_content_placeholder(view: &PluginView) -> bool {
 ///
 /// Sets the thread-local session context before calling so host function callbacks
 /// can read the current session without per-instance `UserData`.
+#[tracing::instrument(skip(pool, input, session), fields(export))]
 async fn call_export<I, O>(
     pool: extism::Pool,
     export: impl Into<String>,
@@ -981,6 +1591,7 @@ pub struct PluginRuntimeBuilder {
     wasm_cache_path: Option<PathBuf>,
     session_ttl: Option<Duration>,
     invocations: Vec<(String, InvocationHandler, Duration)>,
+    persistence: Option<Arc<dyn StatePersistenceProvider>>,
 }
 
 impl PluginRuntimeBuilder {
@@ -1038,7 +1649,8 @@ impl PluginRuntimeBuilder {
 
     /// Provide a persistence backend for `GlobalScope` plugin state.
     #[must_use]
-    pub fn with_state_persistence(self, _provider: impl StatePersistenceProvider) -> Self {
+    pub fn with_state_persistence(mut self, provider: impl StatePersistenceProvider) -> Self {
+        self.persistence = Some(Arc::new(provider));
         self
     }
 
@@ -1084,6 +1696,8 @@ impl PluginRuntimeBuilder {
     pub async fn build(self) -> Result<Arc<PluginRuntime>, PluginRuntimeError> {
         let global_states: Arc<RwLock<GlobalStateMap>> = Arc::new(RwLock::new(HashMap::new()));
         let session_states: Arc<RwLock<SessionStateMap>> = Arc::new(RwLock::new(HashMap::new()));
+        let session_last_access: Arc<RwLock<HashMap<SessionId, std::time::Instant>>> =
+            Arc::new(RwLock::new(HashMap::new()));
 
         let mut invocation_registry = InvocationRegistry::new();
         for (name, handler, timeout) in self.invocations {
@@ -1106,6 +1720,7 @@ impl PluginRuntimeBuilder {
             let mut granted_invocations = HashSet::new();
             let mut granted_global_read = HashSet::new();
             let mut granted_global_write = HashSet::new();
+            let mut granted_http_hosts: Vec<String> = Vec::new();
 
             for cap in &plugin_manifest.host_capabilities {
                 match cap {
@@ -1126,6 +1741,9 @@ impl PluginRuntimeBuilder {
                     HostCapability::GlobalStateWrite { keys } => {
                         granted_global_write.extend(keys.iter().cloned());
                     }
+                    HostCapability::Http { allowed_hosts } => {
+                        granted_http_hosts.extend(allowed_hosts.iter().cloned());
+                    }
                     _ => {}
                 }
             }
@@ -1133,11 +1751,14 @@ impl PluginRuntimeBuilder {
             let ctx = CallCtx {
                 caller: plugin_manifest.id.clone(),
                 session_states: session_states.clone(),
+                session_last_access: session_last_access.clone(),
                 global_states: global_states.clone(),
                 invocation_registry: invocation_registry.clone(),
+                persistence: self.persistence.clone(),
                 granted_invocations,
                 granted_global_read,
                 granted_global_write,
+                granted_http_hosts,
             };
             let user_data = extism::UserData::new(ctx);
             let ctx_arc = user_data
@@ -1213,19 +1834,60 @@ impl PluginRuntimeBuilder {
             );
         }
 
+        // Restore global state from persistence before returning.
+        if let Some(p) = &self.persistence {
+            for id in all_plugins.keys() {
+                if let Ok(Some(state)) = p.load(id).await {
+                    global_states.write().await.insert(id.clone(), state);
+                }
+            }
+        }
+
         let event_bus = EventBus::build_from_plugins(&all_plugins);
         let registries = PluginRuntime::build_registries(&all_plugins);
         let (override_map_tx, _) = broadcast::channel::<OverrideMap>(32);
 
-        Ok(Arc::new(PluginRuntime {
+        let runtime = Arc::new(PluginRuntime {
             plugins: RwLock::new(all_plugins),
             global_states,
             session_states,
+            session_last_access: session_last_access.clone(),
             event_bus: RwLock::new(event_bus),
             registries: RwLock::new(registries),
             invocation_registry,
             override_map_tx,
-        }))
+            persistence: self.persistence,
+        });
+
+        // Session TTL eviction background task.
+        let ttl = self.session_ttl.unwrap_or(Duration::from_hours(24));
+        {
+            let states = runtime.session_states.clone();
+            let last_access = session_last_access;
+            tokio::spawn(async move {
+                let interval_dur = ttl / 4;
+                let mut interval = tokio::time::interval(interval_dur);
+                loop {
+                    interval.tick().await;
+                    let cutoff = std::time::Instant::now().checked_sub(ttl);
+                    let Some(cutoff) = cutoff else { continue };
+                    let expired: Vec<SessionId> = {
+                        let access = last_access.read().await;
+                        access
+                            .iter()
+                            .filter(|&(_, &last)| last < cutoff)
+                            .map(|(id, _)| id.clone())
+                            .collect()
+                    };
+                    for id in &expired {
+                        states.write().await.remove(id);
+                        last_access.write().await.remove(id);
+                    }
+                }
+            });
+        }
+
+        Ok(runtime)
     }
 }
 

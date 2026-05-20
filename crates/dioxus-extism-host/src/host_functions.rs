@@ -1,14 +1,15 @@
 use std::{
     cell::RefCell,
-    collections::HashSet,
+    collections::{HashMap, HashSet},
     sync::{Arc, Mutex},
+    time::Instant,
 };
 
 use dioxus_extism_protocol::{ClientCapabilities, PluginId, SessionId};
 
 use tokio::sync::RwLock;
 
-use crate::runtime::{GlobalStateMap, InvocationRegistry, SessionStateMap};
+use crate::runtime::{GlobalStateMap, InvocationRegistry, SessionStateMap, StatePersistenceProvider};
 use crate::InvocationError;
 
 // ── Per-call session context (thread-local) ───────────────────────────────────
@@ -44,11 +45,18 @@ pub struct CallCtx {
     /// The plugin that owns this pool — constant for the pool's lifetime.
     pub caller: PluginId,
     pub session_states: Arc<RwLock<SessionStateMap>>,
+    /// Last-access timestamps for each session, updated on every state read and write.
+    pub session_last_access: Arc<RwLock<HashMap<SessionId, Instant>>>,
     pub global_states: Arc<RwLock<GlobalStateMap>>,
     pub invocation_registry: Arc<InvocationRegistry>,
+    /// Optional persistence backend; flushed after every global-state write.
+    pub persistence: Option<Arc<dyn StatePersistenceProvider>>,
     pub granted_invocations: HashSet<String>,
     pub granted_global_read: HashSet<String>,
     pub granted_global_write: HashSet<String>,
+    /// Hostnames (without scheme/path/port) the plugin is allowed to contact.
+    /// An empty list means Http capability was not requested.
+    pub granted_http_hosts: Vec<String>,
 }
 
 /// Build all host functions, wiring them to `ctx`.
@@ -101,13 +109,14 @@ fn make_state_get(user_data: extism::UserData<CallCtx>) -> extism::Function {
               -> Result<(), extism::Error> {
             let key: String = plugin.memory_get_val(&inputs[0])?;
             let arc = extract_ctx(&user_data)?;
-            let (session_states, caller) = {
+            let (session_states, session_last_access, caller) = {
                 let ctx = arc.lock().map_err(|_| anyhow::anyhow!("CallCtx mutex poisoned"))?;
-                (ctx.session_states.clone(), ctx.caller.clone())
+                (ctx.session_states.clone(), ctx.session_last_access.clone(), ctx.caller.clone())
             };
             let session_id = get_call_session_id();
             let handle = tokio::runtime::Handle::current();
             let value = handle.block_on(async {
+                session_last_access.write().await.insert(session_id.clone(), Instant::now());
                 let states = session_states.read().await;
                 states
                     .get(&session_id)
@@ -137,13 +146,14 @@ fn make_state_set(user_data: extism::UserData<CallCtx>) -> extism::Function {
             let raw: String = plugin.memory_get_val(&inputs[1])?;
             let value: serde_json::Value = serde_json::from_str(&raw)?;
             let arc = extract_ctx(&user_data)?;
-            let (session_states, caller) = {
+            let (session_states, session_last_access, caller) = {
                 let ctx = arc.lock().map_err(|_| anyhow::anyhow!("CallCtx mutex poisoned"))?;
-                (ctx.session_states.clone(), ctx.caller.clone())
+                (ctx.session_states.clone(), ctx.session_last_access.clone(), ctx.caller.clone())
             };
             let session_id = get_call_session_id();
             let handle = tokio::runtime::Handle::current();
             handle.block_on(async {
+                session_last_access.write().await.insert(session_id.clone(), Instant::now());
                 let mut states = session_states.write().await;
                 states
                     .entry(session_id)
@@ -172,13 +182,14 @@ fn make_state_delete(user_data: extism::UserData<CallCtx>) -> extism::Function {
               -> Result<(), extism::Error> {
             let key: String = plugin.memory_get_val(&inputs[0])?;
             let arc = extract_ctx(&user_data)?;
-            let (session_states, caller) = {
+            let (session_states, session_last_access, caller) = {
                 let ctx = arc.lock().map_err(|_| anyhow::anyhow!("CallCtx mutex poisoned"))?;
-                (ctx.session_states.clone(), ctx.caller.clone())
+                (ctx.session_states.clone(), ctx.session_last_access.clone(), ctx.caller.clone())
             };
             let session_id = get_call_session_id();
             let handle = tokio::runtime::Handle::current();
             handle.block_on(async {
+                session_last_access.write().await.insert(session_id.clone(), Instant::now());
                 let mut states = session_states.write().await;
                 if let Some(plugin_map) = states
                     .get_mut(&session_id)
@@ -250,12 +261,13 @@ fn make_global_state_set(user_data: extism::UserData<CallCtx>) -> extism::Functi
             let raw: String = plugin.memory_get_val(&inputs[1])?;
             let value: serde_json::Value = serde_json::from_str(&raw)?;
             let arc = extract_ctx(&user_data)?;
-            let (global_states, caller, granted) = {
+            let (global_states, caller, granted, persistence) = {
                 let ctx = arc.lock().map_err(|_| anyhow::anyhow!("CallCtx mutex poisoned"))?;
                 (
                     ctx.global_states.clone(),
                     ctx.caller.clone(),
                     ctx.granted_global_write.clone(),
+                    ctx.persistence.clone(),
                 )
             };
             if !granted.is_empty() && !granted.contains(&key) {
@@ -264,10 +276,21 @@ fn make_global_state_set(user_data: extism::UserData<CallCtx>) -> extism::Functi
                 ));
             }
             let handle = tokio::runtime::Handle::current();
-            handle.block_on(async {
+            let snapshot = handle.block_on(async {
                 let mut states = global_states.write().await;
-                states.entry(caller).or_default().insert(key, value);
+                states.entry(caller.clone()).or_default().insert(key.clone(), value);
+                let snap = states.get(&caller).cloned().unwrap_or_default();
+                drop(states);
+                snap
             });
+            // Async persistence flush — best-effort, does not block the host function.
+            if let Some(p) = persistence {
+                handle.spawn(async move {
+                    if let Err(e) = p.save(&caller, &snapshot).await {
+                        tracing::warn!(plugin = %caller.0, error = %e, "global state persistence flush failed");
+                    }
+                });
+            }
             Ok(())
         },
     )
@@ -369,12 +392,68 @@ fn make_http_fetch(user_data: extism::UserData<CallCtx>) -> extism::Function {
         [extism::PTR],
         user_data,
         move |plugin: &mut extism::CurrentPlugin,
-              _inputs: &[extism::Val],
+              inputs: &[extism::Val],
               outputs: &mut [extism::Val],
-              _user_data: extism::UserData<CallCtx>|
+              user_data: extism::UserData<CallCtx>|
               -> Result<(), extism::Error> {
-            tracing::debug!("dx_http_fetch: not yet implemented");
-            write_json_output(plugin, outputs, &serde_json::Value::Null)
+            use dioxus_extism_protocol::{HttpRequest, HttpResponse};
+
+            let raw: String = plugin.memory_get_val(&inputs[0])?;
+            let req: HttpRequest = serde_json::from_str(&raw)?;
+
+            let arc = extract_ctx(&user_data)?;
+            let (caller, allowed_hosts) = {
+                let ctx = arc.lock().map_err(|_| anyhow::anyhow!("CallCtx mutex poisoned"))?;
+                (ctx.caller.clone(), ctx.granted_http_hosts.clone())
+            };
+
+            // Check the URL host against the allowed list.
+            let url = &req.url;
+            let req_host = url
+                .split("://")
+                .nth(1)
+                .unwrap_or(url)
+                .split('/')
+                .next()
+                .unwrap_or(url)
+                .split(':')
+                .next()
+                .unwrap_or(url);
+
+            if !allowed_hosts.is_empty() && !allowed_hosts.iter().any(|h| h == req_host) {
+                return Err(anyhow::anyhow!(
+                    "capability denied: Http({req_host}) not in allowed_hosts for {caller:?}"
+                ));
+            }
+
+            let handle = tokio::runtime::Handle::current();
+            let response = handle.block_on(async {
+                let client = reqwest::Client::new();
+                let method = reqwest::Method::from_bytes(req.method.as_bytes())
+                    .unwrap_or(reqwest::Method::GET);
+                let mut builder = client.request(method, url);
+                for (k, v) in &req.headers {
+                    builder = builder.header(k, v);
+                }
+                if let Some(body) = req.body {
+                    builder = builder.body(body);
+                }
+                let resp = builder.send().await?;
+                let status = resp.status().as_u16();
+                let mut headers = std::collections::HashMap::new();
+                for (k, v) in resp.headers() {
+                    if let Ok(v_str) = v.to_str() {
+                        headers.insert(k.as_str().to_owned(), v_str.to_owned());
+                    }
+                }
+                let body = resp.text().await?;
+                Ok::<HttpResponse, reqwest::Error>(HttpResponse { status, headers, body })
+            });
+
+            match response {
+                Ok(resp) => write_json_output(plugin, outputs, &resp),
+                Err(e) => Err(anyhow::anyhow!("dx_http_fetch failed: {e}")),
+            }
         },
     )
 }

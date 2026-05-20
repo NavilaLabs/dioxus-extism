@@ -67,6 +67,21 @@ pub struct ClientCapabilities {
     pub registered_host_components: Vec<String>,
 }
 
+impl ClientCapabilities {
+    /// `ClientCapabilities` for use in SSR contexts where there is no real client.
+    ///
+    /// Uses the current host protocol version and declares no host components,
+    /// so plugins that require specific client capabilities are treated as incompatible.
+    #[must_use]
+    pub const fn default_ssr() -> Self {
+        Self {
+            protocol_version: PROTOCOL_VERSION,
+            app_version: 0,
+            registered_host_components: vec![],
+        }
+    }
+}
+
 /// Provided as context by `PluginBootProvider` when loaded plugins require
 /// a newer client than what is connected.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -383,7 +398,7 @@ pub enum EventSource {
 // ── Slot content and interaction response ────────────────────────────────────
 
 /// One plugin's contribution to a named slot.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct SlotContent {
     pub plugin_id: PluginId,
     pub priority: i32,
@@ -447,7 +462,7 @@ pub struct OverrideMap {
 }
 
 /// Output of a full SSR render pass for one route.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct SsrRouteOutput {
     pub route_transforms: SsrRouteTransforms,
     /// Pre-rendered slot contents keyed by slot name.
@@ -457,7 +472,7 @@ pub struct SsrRouteOutput {
 }
 
 /// SSR equivalent of `RouteTransforms` (serialisable for embedding into SSR HTML).
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default, PartialEq)]
 pub struct SsrRouteTransforms {
     pub before: Vec<PluginView>,
     pub wrap: Option<PluginView>,
@@ -510,9 +525,28 @@ impl RouteTransforms {
 }
 
 /// SSR equivalent of `ComponentResolution`.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct SsrComponentResolution {
     pub before: Vec<PluginView>,
     pub replacement: Option<PluginView>,
     pub after: Vec<PluginView>,
+}
+
+// ── HTTP fetch types ──────────────────────────────────────────────────────────
+
+/// An outbound HTTP request made by a plugin via `dx_http_fetch`.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct HttpRequest {
+    pub method: String,
+    pub url: String,
+    pub headers: HashMap<String, String>,
+    pub body: Option<String>,
+}
+
+/// The response returned to a plugin after `dx_http_fetch`.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct HttpResponse {
+    pub status: u16,
+    pub headers: HashMap<String, String>,
+    pub body: String,
 }

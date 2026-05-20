@@ -11,6 +11,9 @@ members = [
     "examples/hello-plugin/host",
     "examples/route-injection-example/plugin",
     "examples/route-injection-example/host",
+    "examples/tree-selector-example/plugin_a",
+    "examples/tree-selector-example/plugin_b",
+    "examples/tree-selector-example/host",
 ]
 resolver = "2"
 

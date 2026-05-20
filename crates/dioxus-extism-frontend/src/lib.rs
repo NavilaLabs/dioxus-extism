@@ -4,7 +4,7 @@ mod session;
 
 pub use components::{
     HostComponentRegistry, OverridableComponent, PluginAwareRouter, PluginBootProvider, PluginSlot,
-    PluginViewRenderer, use_current_path,
+    PluginSlotSsr, PluginViewRenderer, SsrPluginDataProvider, use_current_path, use_plugin_state,
 };
 pub use session::{DesktopSessionProvider, SessionProviderRoot, WebSessionProvider};
 

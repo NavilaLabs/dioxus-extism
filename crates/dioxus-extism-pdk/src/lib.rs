@@ -7,9 +7,9 @@ pub use extism_pdk;
 
 pub use dioxus_extism_protocol::{
     ClientCapabilities, HandlerId, HookCall, HookResult, HostCapability, HostComponentRef,
-    PluginEvent, PluginId, PluginManifest, PluginView, PriorityHint, RoutePattern, Selector,
-    SessionCtx, SessionId, SlotContent, SlotRegistration, StateScope, TransformDeclaration,
-    TransformInput, TransformOp, TransformOutput, ViewUpdate,
+    NodeSelector, PluginEvent, PluginId, PluginManifest, PluginView, PriorityHint, RoutePattern,
+    Selector, SessionCtx, SessionId, SlotContent, SlotRegistration, StateScope,
+    TransformDeclaration, TransformInput, TransformOp, TransformOutput, ViewUpdate,
 };
 pub use error::PdkError;
 pub use view::{div, element, incompatible, original_content, span, text, ViewBuilder};
@@ -18,10 +18,10 @@ pub use view::{div, element, incompatible, original_content, span, text, ViewBui
 pub mod prelude {
     pub use crate::{
         ClientCapabilities, DioxusPlugin, EventSubscriber, HandlerId, HookCall, HookHandler,
-        HookResult, HostCapability, HostComponentRef, InteractionHandler, OnLoad, OnUnload,
-        PdkError, PluginCtx, PluginEvent, PluginId, PluginManifest, PluginView, PriorityHint,
-        RoutePattern, Selector, SessionCtx, SessionId, SlotContent, SlotRegistration, SlotProvider,
-        StateScope, TransformDeclaration, TransformInput, TransformOp, TransformOutput,
+        HookResult, HostCapability, HostComponentRef, InteractionHandler, NodeSelector, OnLoad,
+        OnUnload, PdkError, PluginCtx, PluginEvent, PluginId, PluginManifest, PluginView,
+        PriorityHint, RoutePattern, Selector, SessionCtx, SessionId, SlotContent, SlotRegistration,
+        SlotProvider, StateScope, TransformDeclaration, TransformInput, TransformOp, TransformOutput,
         TransformProvider, ViewUpdate, div, element, incompatible, original_content, span, text,
     };
 }

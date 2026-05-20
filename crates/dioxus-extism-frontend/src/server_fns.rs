@@ -1,6 +1,7 @@
 use dioxus::prelude::*;
 use dioxus_extism_protocol::{
-    ClientCapabilities, ComponentResolution, OverrideMap, RouteTransforms, SessionId, SlotContent,
+    ClientCapabilities, ComponentResolution, OverrideMap, PluginId, RouteTransforms, SessionId,
+    SlotContent,
 };
 
 /// Fetch the current `OverrideMap` at boot time.
@@ -23,15 +24,30 @@ pub async fn get_override_map(
 }
 
 /// Fetch slot contributions for a named slot.
-#[allow(clippy::unused_async)]
 #[server]
 pub async fn get_slot_content(
     slot: String,
     session_id: SessionId,
     caps: ClientCapabilities,
 ) -> Result<Vec<SlotContent>, ServerFnError> {
-    let _ = (slot, session_id, caps);
-    Ok(vec![])
+    use std::sync::Arc;
+
+    use axum::extract::Extension;
+    use dioxus_extism_host::PluginRuntime;
+    use dioxus_extism_protocol::SessionCtx;
+
+    let result: Result<Extension<Arc<PluginRuntime>>, _> =
+        dioxus::fullstack::FullstackContext::extract().await;
+    match result {
+        Ok(Extension(runtime)) => {
+            let session = SessionCtx { session_id, user_id: None, client: caps, caller: None };
+            runtime
+                .render_slot(&slot, &session)
+                .await
+                .map_err(|e| ServerFnError::new(e.to_string()))
+        }
+        Err(_) => Ok(vec![]),
+    }
 }
 
 /// Resolve route transforms (before/wrap/after) for the current path.
@@ -65,6 +81,31 @@ pub async fn get_route_transforms(
         .render_route_transforms(&path, &session)
         .await
         .map_err(|e| ServerFnError::new(e.to_string()))
+}
+
+/// Read one key from a plugin's session state.
+///
+/// Returns `None` if the session, plugin, or key does not exist.
+#[server]
+pub async fn get_plugin_state(
+    plugin_id: String,
+    key: String,
+    session_id: SessionId,
+) -> Result<Option<serde_json::Value>, ServerFnError> {
+    use std::sync::Arc;
+
+    use axum::extract::Extension;
+    use dioxus_extism_host::PluginRuntime;
+
+    let result: Result<Extension<Arc<PluginRuntime>>, _> =
+        dioxus::fullstack::FullstackContext::extract().await;
+    match result {
+        Ok(Extension(runtime)) => {
+            let pid = PluginId(plugin_id);
+            Ok(runtime.get_plugin_state(&pid, &key, &session_id).await)
+        }
+        Err(_) => Ok(None),
+    }
 }
 
 /// Resolve plugin transforms for a named component.
