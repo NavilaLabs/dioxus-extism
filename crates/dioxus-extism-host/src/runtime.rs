@@ -19,7 +19,7 @@ use extism::convert::Json;
 use futures::future::BoxFuture;
 use indexmap::IndexMap;
 use serde::{Serialize, de::DeserializeOwned};
-use tokio::sync::{RwLock, broadcast};
+use tokio::sync::{RwLock, broadcast, mpsc};
 
 use crate::error::{InvocationError, PersistenceError, PluginRuntimeError};
 use crate::host_functions::{self, CallCtx, make_host_functions};
@@ -210,6 +210,8 @@ pub struct Registries {
     pub(crate) hooks: HookRegistry,
     pub(crate) transforms: TransformRegistry,
     pub(crate) override_map: OverrideMap,
+    pub(crate) api_routes: ApiRegistry,
+    pub(crate) page_routes: PageRouteRegistry,
 }
 
 // ── Invocation registry ───────────────────────────────────────────────────────
@@ -249,6 +251,53 @@ impl InvocationRegistry {
         tokio::time::timeout(*timeout, handler(args, session))
             .await
             .map_err(|_| InvocationError::Timeout(*timeout))?
+    }
+}
+
+// ── API route registry ────────────────────────────────────────────────────────
+
+/// A single plugin-declared inbound API route entry stored in the registry.
+#[derive(Clone)]
+pub struct ApiRouteEntry {
+    /// Plugin that owns this route.
+    pub plugin_id: PluginId,
+    /// WASM export name to call when this route is hit.
+    pub handler_fn: String,
+    /// Pool for the owning plugin — cheap to clone (Arc internally).
+    pub pool: extism::Pool,
+}
+
+/// Maps `(method_str, path_str)` to the plugin that handles it.
+///
+/// Built by `build_registries`; a duplicate key is a startup error.
+pub struct ApiRegistry(pub(crate) HashMap<(String, String), ApiRouteEntry>);
+
+// ── Page route registry ───────────────────────────────────────────────────────
+
+/// A single plugin-declared view page route entry.
+#[derive(Clone)]
+pub struct PageRouteEntry {
+    pub plugin_id: PluginId,
+    pub handler_fn: String,
+    pub pool: extism::Pool,
+    pub bypass_layout: bool,
+    pub title: Option<String>,
+    /// The declared route pattern (`:param` syntax) stored for param extraction.
+    pub pattern: RoutePattern,
+}
+
+/// Maps relative path patterns to page route entries.
+///
+/// Lookup iterates entries; first match wins (ordered by declaration / plugin insertion order).
+pub struct PageRouteRegistry(pub(crate) Vec<(RoutePattern, PageRouteEntry)>);
+
+impl PageRouteRegistry {
+    /// Find the entry whose pattern matches `relative_path` and extract path params.
+    pub fn find(&self, relative_path: &str) -> Option<(PageRouteEntry, HashMap<String, String>)> {
+        self.0.iter().find_map(|(pat, entry)| {
+            pat.extract_params(relative_path)
+                .map(|params| (entry.clone(), params))
+        })
     }
 }
 
@@ -314,6 +363,10 @@ pub struct PluginRuntime {
     pub(crate) invocation_registry: Arc<InvocationRegistry>,
     pub(crate) override_map_tx: broadcast::Sender<OverrideMap>,
     pub(crate) persistence: Option<Arc<dyn StatePersistenceProvider>>,
+    /// URL prefix under which plugin page routes are served (set at build time).
+    pub(crate) plugin_page_prefix: Option<String>,
+    /// Sender half of the event dispatch channel; plugins call dx_emit_event → send here.
+    pub(crate) event_tx: mpsc::UnboundedSender<(PluginEvent, SessionCtx)>,
 }
 
 impl PluginRuntime {
@@ -1099,6 +1152,7 @@ impl PluginRuntime {
             granted_global_read,
             granted_global_write,
             granted_http_hosts,
+            event_tx: self.event_tx.clone(),
         };
         let user_data = extism::UserData::new(new_ctx);
         let new_ctx_arc = user_data
@@ -1187,7 +1241,8 @@ impl PluginRuntime {
                     ctx_arc: new_ctx_arc,
                 },
             );
-            let mut new_regs = Self::build_registries(&plugins);
+            let mut new_regs =
+                Self::build_registries(&plugins, self.plugin_page_prefix.as_deref())?;
             new_regs.override_map.version = regs.override_map.version + 1;
             *regs = new_regs;
             regs.override_map.clone()
@@ -1233,7 +1288,8 @@ impl PluginRuntime {
                 return Err(PluginRuntimeError::PluginNotFound(id.clone()));
             }
             let mut regs = self.registries.write().await;
-            let mut new_regs = Self::build_registries(&plugins);
+            let mut new_regs =
+                Self::build_registries(&plugins, self.plugin_page_prefix.as_deref())?;
             new_regs.override_map.version = regs.override_map.version + 1;
             *regs = new_regs;
             regs.override_map.clone()
@@ -1248,7 +1304,10 @@ impl PluginRuntime {
             && plugin.manifest.min_app_version <= client.app_version
     }
 
-    pub(crate) fn build_registries(plugins: &IndexMap<PluginId, LoadedPlugin>) -> Registries {
+    pub(crate) fn build_registries(
+        plugins: &IndexMap<PluginId, LoadedPlugin>,
+        page_prefix: Option<&str>,
+    ) -> Result<Registries, PluginRuntimeError> {
         use dioxus_extism_protocol::{PluginClientRequirement, Selector};
 
         let mut slots: HashMap<String, Vec<(i32, PluginId)>> = HashMap::new();
@@ -1260,6 +1319,8 @@ impl PluginRuntime {
         let mut required_app_version: u32 = 0;
         let mut plugin_requirements: HashMap<PluginId, PluginClientRequirement> = HashMap::new();
         let mut transforms = TransformRegistry::default();
+        let mut api_route_map: HashMap<(String, String), ApiRouteEntry> = HashMap::new();
+        let mut page_route_list: Vec<(RoutePattern, PageRouteEntry)> = Vec::new();
 
         for (id, loaded) in plugins {
             let manifest = &loaded.manifest;
@@ -1311,6 +1372,51 @@ impl PluginRuntime {
                     _ => {}
                 }
             }
+            for decl in &manifest.api_routes {
+                let key = (decl.method.as_str().to_owned(), decl.path.clone());
+                if let Some(existing) = api_route_map.get(&key) {
+                    return Err(PluginRuntimeError::ApiRouteConflict {
+                        method: decl.method.as_str().to_owned(),
+                        path: decl.path.clone(),
+                        first: existing.plugin_id.clone(),
+                        second: id.clone(),
+                    });
+                }
+                api_route_map.insert(
+                    key,
+                    ApiRouteEntry {
+                        plugin_id: id.clone(),
+                        handler_fn: decl.handler_fn.clone(),
+                        pool: loaded.pool.clone(),
+                    },
+                );
+            }
+            for decl in &manifest.page_routes {
+                if page_route_list.iter().any(|(pat, _)| pat.0 == decl.path) {
+                    let existing_id = page_route_list
+                        .iter()
+                        .find(|(pat, _)| pat.0 == decl.path)
+                        .map(|(_, e)| e.plugin_id.clone())
+                        .unwrap();
+                    return Err(PluginRuntimeError::PageRouteConflict {
+                        path: decl.path.clone(),
+                        first: existing_id,
+                        second: id.clone(),
+                    });
+                }
+                let pattern = RoutePattern(decl.path.clone());
+                page_route_list.push((
+                    pattern.clone(),
+                    PageRouteEntry {
+                        plugin_id: id.clone(),
+                        handler_fn: decl.render_fn.clone(),
+                        pool: loaded.pool.clone(),
+                        bypass_layout: decl.bypass_layout,
+                        title: decl.title.clone(),
+                        pattern,
+                    },
+                ));
+            }
 
             required_protocol_version =
                 required_protocol_version.max(manifest.min_protocol_version);
@@ -1333,7 +1439,7 @@ impl PluginRuntime {
         }
         route_patterns.dedup();
 
-        Registries {
+        Ok(Registries {
             slots: SlotRegistry(slots),
             hooks: HookRegistry(hooks),
             transforms,
@@ -1345,8 +1451,11 @@ impl PluginRuntime {
                 required_protocol_version,
                 required_app_version,
                 plugin_requirements,
+                page_route_prefix: page_prefix.map(|s| s.to_owned()),
             },
-        }
+            api_routes: ApiRegistry(api_route_map),
+            page_routes: PageRouteRegistry(page_route_list),
+        })
     }
 }
 
@@ -1618,6 +1727,7 @@ pub struct PluginRuntimeBuilder {
     session_ttl: Option<Duration>,
     invocations: Vec<(String, InvocationHandler, Duration)>,
     persistence: Option<Arc<dyn StatePersistenceProvider>>,
+    plugin_page_prefix: Option<String>,
 }
 
 impl PluginRuntimeBuilder {
@@ -1670,6 +1780,20 @@ impl PluginRuntimeBuilder {
     #[must_use]
     pub const fn with_session_ttl(mut self, ttl: Duration) -> Self {
         self.session_ttl = Some(ttl);
+        self
+    }
+
+    /// Set the URL prefix under which plugin-declared page routes are served.
+    ///
+    /// The host must also add a matching catch-all route to their Dioxus `Route` enum:
+    /// ```ignore
+    /// #[route("/p/:..segments")]
+    /// PluginPage { segments: Vec<String> },
+    /// ```
+    /// Replace `"/p"` with whatever prefix you choose here.
+    #[must_use]
+    pub fn with_plugin_page_prefix(mut self, prefix: impl Into<String>) -> Self {
+        self.plugin_page_prefix = Some(prefix.into());
         self
     }
 
@@ -1731,6 +1855,8 @@ impl PluginRuntimeBuilder {
         }
         let invocation_registry = Arc::new(invocation_registry);
 
+        let (event_tx, event_rx) = mpsc::unbounded_channel::<(PluginEvent, SessionCtx)>();
+
         let mut all_plugins: IndexMap<PluginId, LoadedPlugin> = IndexMap::new();
 
         for (source, config) in self.sources {
@@ -1785,6 +1911,7 @@ impl PluginRuntimeBuilder {
                 granted_global_read,
                 granted_global_write,
                 granted_http_hosts,
+                event_tx: event_tx.clone(),
             };
             let user_data = extism::UserData::new(ctx);
             let ctx_arc = user_data
@@ -1870,7 +1997,8 @@ impl PluginRuntimeBuilder {
         }
 
         let event_bus = EventBus::build_from_plugins(&all_plugins);
-        let registries = PluginRuntime::build_registries(&all_plugins);
+        let registries =
+            PluginRuntime::build_registries(&all_plugins, self.plugin_page_prefix.as_deref())?;
         let (override_map_tx, _) = broadcast::channel::<OverrideMap>(32);
 
         let runtime = Arc::new(PluginRuntime {
@@ -1883,7 +2011,22 @@ impl PluginRuntimeBuilder {
             invocation_registry,
             override_map_tx,
             persistence: self.persistence,
+            plugin_page_prefix: self.plugin_page_prefix,
+            event_tx,
         });
+
+        // Event dispatch task: receives plugin-emitted events and fans them out.
+        {
+            let mut event_rx = event_rx;
+            let rt = Arc::clone(&runtime);
+            tokio::spawn(async move {
+                while let Some((event, session)) = event_rx.recv().await {
+                    if let Err(e) = rt.emit_event(event, &session).await {
+                        tracing::warn!("event dispatch error: {e}");
+                    }
+                }
+            });
+        }
 
         // Session TTL eviction background task.
         let ttl = self.session_ttl.unwrap_or(Duration::from_hours(24));
@@ -1939,6 +2082,200 @@ async fn load_plugin_manifest(source: &PluginSource) -> Result<PluginManifest, P
     })
     .await
     .map_err(|e| PluginRuntimeError::TaskPanic(e.to_string()))?
+}
+
+// ── Plugin API router ────────────────────────────────────────────────────────
+
+impl PluginRuntime {
+    /// Build an `axum::Router` containing all inbound HTTP API routes declared by plugins.
+    ///
+    /// Call this **before** `serve_dioxus_application` — that call installs a fallback
+    /// handler which seals the router against further route or merge operations.
+    ///
+    /// # Note
+    /// API route closures capture pool clones at startup time. Plugin hot-reload rebuilds
+    /// the internal `ApiRegistry` but cannot update the already-running Axum router.
+    /// API routes are therefore static for the lifetime of the server process.
+    pub async fn api_router<S>(&self) -> axum::Router<S>
+    where
+        S: Clone + Send + Sync + 'static,
+    {
+        use axum::extract::{Path, Query};
+        use axum::http::{HeaderMap, HeaderName, HeaderValue, StatusCode};
+        use axum::body::Bytes;
+        use axum::response::IntoResponse as _;
+        use dioxus_extism_protocol::{ApiRequest, ApiResponse};
+
+        let entries: Vec<((String, String), ApiRouteEntry)> = {
+            let regs = self.registries.read().await;
+            regs.api_routes.0.iter().map(|(k, v)| (k.clone(), v.clone())).collect()
+        };
+
+        let mut router = axum::Router::<S>::new();
+
+        for ((method_str, path_str), entry) in entries {
+            let axum_path = colon_params_to_braces(&path_str);
+
+            let handler = {
+                let entry = entry.clone();
+                move |
+                    Path(path_params): Path<HashMap<String, String>>,
+                    Query(query_params): Query<HashMap<String, String>>,
+                    headers: HeaderMap,
+                    body: Bytes,
+                | {
+                    let pool = entry.pool.clone();
+                    let handler_fn = entry.handler_fn.clone();
+                    let plugin_id = entry.plugin_id.clone();
+                    async move {
+                        let body_json = if body.is_empty() {
+                            None
+                        } else {
+                            serde_json::from_slice::<serde_json::Value>(&body).ok()
+                        };
+                        let headers_map: HashMap<String, String> = headers
+                            .iter()
+                            .filter_map(|(k, v)| {
+                                v.to_str().ok().map(|v| (k.as_str().to_owned(), v.to_owned()))
+                            })
+                            .collect();
+                        let request = ApiRequest {
+                            path_params,
+                            query_params,
+                            headers: headers_map,
+                            body: body_json,
+                        };
+                        let stub = SessionCtx {
+                            session_id: SessionId("__api__".into()),
+                            user_id: None,
+                            client: ClientCapabilities {
+                                protocol_version: PROTOCOL_VERSION,
+                                app_version: 0,
+                                registered_host_components: vec![],
+                            },
+                            caller: None,
+                        };
+                        match call_export::<ApiRequest, ApiResponse>(
+                            pool,
+                            handler_fn,
+                            request,
+                            stub,
+                        )
+                        .await
+                        {
+                            Ok(resp) => {
+                                let status = StatusCode::from_u16(resp.status)
+                                    .unwrap_or(StatusCode::INTERNAL_SERVER_ERROR);
+                                let body_val =
+                                    resp.body.unwrap_or(serde_json::Value::Null);
+                                let mut response =
+                                    (status, axum::Json(body_val)).into_response();
+                                for (k, v) in resp.headers {
+                                    if let (Ok(name), Ok(val)) = (
+                                        HeaderName::from_bytes(k.as_bytes()),
+                                        HeaderValue::from_str(&v),
+                                    ) {
+                                        response.headers_mut().insert(name, val);
+                                    }
+                                }
+                                response
+                            }
+                            Err(e) => {
+                                tracing::error!(
+                                    plugin = %plugin_id.0,
+                                    error = %e,
+                                    "plugin API route handler failed"
+                                );
+                                (
+                                    StatusCode::INTERNAL_SERVER_ERROR,
+                                    axum::Json(
+                                        serde_json::json!({"error": e.to_string()}),
+                                    ),
+                                )
+                                    .into_response()
+                            }
+                        }
+                    }
+                }
+            };
+
+            let method_router = match method_str.as_str() {
+                "GET"    => axum::routing::get(handler),
+                "POST"   => axum::routing::post(handler),
+                "PUT"    => axum::routing::put(handler),
+                "PATCH"  => axum::routing::patch(handler),
+                "DELETE" => axum::routing::delete(handler),
+                other => {
+                    tracing::warn!("api_router: unknown method {other}, skipping {path_str}");
+                    continue;
+                }
+            };
+            router = router.route(&axum_path, method_router);
+        }
+
+        router
+    }
+}
+
+/// Convert `:param` path segments to `{param}` for Axum 0.8 syntax.
+///
+/// Example: `"/api/notes/:id"` → `"/api/notes/{id}"`
+fn colon_params_to_braces(path: &str) -> String {
+    path.split('/')
+        .map(|seg| {
+            seg.strip_prefix(':')
+                .map_or_else(|| seg.to_owned(), |name| format!("{{{name}}}"))
+        })
+        .collect::<Vec<_>>()
+        .join("/")
+}
+
+// ── Plugin page route rendering ───────────────────────────────────────────────
+
+impl PluginRuntime {
+    /// Render a plugin-declared page route, returning `None` if no plugin owns the path.
+    ///
+    /// `relative_path` is the path **after** the host's configured prefix, e.g. `"/notes"`.
+    /// Path parameters are extracted from the declared pattern automatically.
+    ///
+    /// # Errors
+    /// Returns `PluginRuntimeError` if the plugin call fails.
+    pub async fn render_page_route(
+        &self,
+        relative_path: &str,
+        session: &SessionCtx,
+    ) -> Result<Option<dioxus_extism_protocol::PageRouteOutput>, PluginRuntimeError> {
+        use dioxus_extism_protocol::{PageRouteInput, PageRouteOutput};
+
+        let result = {
+            let regs = self.registries.read().await;
+            regs.page_routes.find(relative_path)
+        };
+
+        let Some((entry, path_params)) = result else {
+            return Ok(None);
+        };
+
+        let input = PageRouteInput {
+            path_params,
+            query_params: HashMap::new(),
+            session: session.clone(),
+        };
+
+        let view = call_export::<PageRouteInput, PluginView>(
+            entry.pool.clone(),
+            entry.handler_fn.clone(),
+            input,
+            session.clone(),
+        )
+        .await?;
+
+        Ok(Some(PageRouteOutput {
+            view,
+            bypass_layout: entry.bypass_layout,
+            title: entry.title.clone(),
+        }))
+    }
 }
 
 // ── PluginRuntimeExt for axum::Router ────────────────────────────────────────

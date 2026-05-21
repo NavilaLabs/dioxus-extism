@@ -40,6 +40,12 @@ impl DioxusPlugin for NotesPlugin {
             host_capabilities: vec![HostCapability::Invoke {
                 names: vec!["get_notes".into(), "add_note".into()],
             }],
+            page_routes: vec![PageRouteDeclaration {
+                path: "/notes".into(),
+                title: Some("All Notes".into()),
+                render_fn: "render_notes_page".into(),
+                bypass_layout: false,
+            }],
             ..Default::default()
         }
     }
@@ -74,6 +80,43 @@ pub fn on_interaction(
     };
 
     Ok(Json(update))
+}
+
+/// Render the `/notes` page route: lists all notes across every slug.
+#[plugin_fn]
+pub fn render_notes_page(
+    Json(input): Json<PageRouteInput>,
+) -> FnResult<Json<PluginView>> {
+    let _ = input; // no path params needed for the listing page
+    let all_notes = fetch_notes("").unwrap_or_default();
+    let count = all_notes.len();
+
+    let items: Vec<PluginView> = all_notes
+        .iter()
+        .map(|n| {
+            div()
+                .class("plugin-note-item")
+                .child(text(format!("• {}", n.text)))
+                .build()
+        })
+        .collect();
+
+    let body = if items.is_empty() {
+        div()
+            .class("plugin-notes-empty")
+            .child(text("No notes yet across any article."))
+            .build()
+    } else {
+        div().class("plugin-notes-list").children(items).build()
+    };
+
+    Ok(Json(
+        div()
+            .class("plugin-notes-page")
+            .child(element("h1").child(text(format!("All Notes ({count})"))).build())
+            .child(body)
+            .build(),
+    ))
 }
 
 // ── Interaction handlers ──────────────────────────────────────────────────────

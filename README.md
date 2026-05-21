@@ -150,6 +150,42 @@ Expected on an article page:
 
 ---
 
+### showcase
+
+A blog platform that exercises every dioxus-extism capability in one place. Two
+independent plugins extend the host: `showcase/comments` handles the comment
+section and `showcase/stats` handles view counts and reactions. Together they
+demonstrate slots, API routes, plugin pages, global and session state,
+interactions, event emission and subscription, hook handlers, route transforms,
+`dx_invoke`, and cross-plugin state reads — without any plugin-specific code in
+the host.
+
+**1. Build both plugins**
+
+```bash
+cargo build -p showcase-plugin-comments --target wasm32-unknown-unknown --release
+cargo build -p showcase-plugin-stats    --target wasm32-unknown-unknown --release
+```
+
+**2. Start the host**
+
+```bash
+cd examples/showcase/host
+dx serve
+```
+
+**3. Open the browser**
+
+Navigate to [http://localhost:8080](http://localhost:8080).
+
+Expected:
+- Home page has a "trending" banner injected by the stats plugin
+- Post pages show a stats slot (view count + reactions) and a comments slot (list + live form)
+- `/p/comments` and `/p/stats` serve plugin-declared pages
+- Submitting a comment emits `comment_posted`; the stats plugin receives it and updates its counts
+
+---
+
 ## Custom bind address / port
 
 Pass `--addr` and `--port` to `dx serve`:
@@ -180,6 +216,7 @@ dioxus-extism/
 │   ├── hello-plugin/             # minimal slot example
 │   ├── route-injection-example/  # route wrap + inject-after example
 │   ├── tree-selector-example/    # two plugins, Within transform
-│   └── notes-plugin/             # dx_invoke + interactive slot (input/button)
+│   ├── notes-plugin/             # dx_invoke + interactive slot (input/button)
+│   └── showcase/                 # comprehensive demo — all capabilities, two plugins
 └── dioxus-extism/                # thin re-export crate
 ```

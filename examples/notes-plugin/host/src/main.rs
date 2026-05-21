@@ -6,8 +6,8 @@
 
 use dioxus::prelude::*;
 use dioxus_extism_frontend::{
-    PluginBootProvider, PluginViewRenderer, SessionProviderRoot, WebSessionProvider,
-    use_session_id,
+    PluginBootProvider, PluginPageOutlet, PluginViewRenderer, SessionProviderRoot,
+    WebSessionProvider, use_session_id,
 };
 use dioxus_extism_protocol::{PluginId, SessionId, SlotContent};
 use serde::{Deserialize, Serialize};
@@ -106,7 +106,8 @@ fn server_main() {
     let next_id = Arc::new(AtomicU64::new(1));
 
     let builder = register_get_notes(PluginRuntimeBuilder::new(), store.clone());
-    let builder = register_add_note(builder, store, next_id);
+    let builder = register_add_note(builder, store, next_id)
+        .with_plugin_page_prefix("/p");
 
     tokio::runtime::Runtime::new()
         .expect("tokio runtime")
@@ -131,9 +132,11 @@ fn server_main() {
             let runtime = builder.build().await.expect("plugin runtime build");
 
             let addr = dioxus::cli_config::fullstack_address_or_localhost();
-            let router = axum::Router::new()
+            let router = runtime
+                .api_router()
+                .await
                 .serve_dioxus_application(dioxus::server::ServeConfig::new(), App)
-                .layer(axum::Extension(runtime));
+                .layer(axum::Extension(std::sync::Arc::clone(&runtime)));
 
             tracing::info!("listening on {addr}");
             let listener = tokio::net::TcpListener::bind(addr)
@@ -192,6 +195,8 @@ enum Route {
     HomePage,
     #[route("/articles/:slug")]
     ArticlePage { slug: String },
+    #[route("/p/:..segments")]
+    PluginPage { segments: Vec<String> },
 }
 
 /// Root app: session context + plugin boot wrapping the router.
@@ -218,6 +223,30 @@ fn HomePage() -> Element {
                 li { Link { to: Route::ArticlePage { slug: "wasm-plugins".into() }, "WASM Plugins" } }
                 li { Link { to: Route::ArticlePage { slug: "dioxus-tutorial".into() }, "Dioxus Tutorial" } }
             }
+            p {
+                Link {
+                    to: Route::PluginPage { segments: vec!["notes".into()] },
+                    "View all notes (plugin page)"
+                }
+            }
+        }
+    }
+}
+
+/// Wildcard route: dispatches to a plugin-declared page via `PluginPageOutlet`.
+#[component]
+fn PluginPage(segments: Vec<String>) -> Element {
+    let relative_path = format!("/{}", segments.join("/"));
+    rsx! {
+        div {
+            PluginPageOutlet {
+                relative_path,
+                not_found: rsx! {
+                    p { "No plugin page found at this path." }
+                },
+            }
+            hr {}
+            Link { to: Route::HomePage, "← Back to home" }
         }
     }
 }

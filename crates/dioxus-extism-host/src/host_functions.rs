@@ -5,7 +5,7 @@ use std::{
     time::Instant,
 };
 
-use dioxus_extism_protocol::{ClientCapabilities, PluginId, SessionId};
+use dioxus_extism_protocol::{ClientCapabilities, EventSource, PluginEvent, PluginId, SessionCtx, SessionId};
 
 use tokio::sync::RwLock;
 
@@ -57,6 +57,8 @@ pub struct CallCtx {
     /// Hostnames (without scheme/path/port) the plugin is allowed to contact.
     /// An empty list means Http capability was not requested.
     pub granted_http_hosts: Vec<String>,
+    /// Sender half of the shared event bus; plugin calls `dx_emit_event` → sends here.
+    pub event_tx: tokio::sync::mpsc::UnboundedSender<(PluginEvent, SessionCtx)>,
 }
 
 /// Build all host functions, wiring them to `ctx`.
@@ -381,12 +383,30 @@ fn make_emit_event(user_data: extism::UserData<CallCtx>) -> extism::Function {
         move |plugin: &mut extism::CurrentPlugin,
               inputs: &[extism::Val],
               _outputs: &mut [extism::Val],
-              _user_data: extism::UserData<CallCtx>|
+              user_data: extism::UserData<CallCtx>|
               -> Result<(), extism::Error> {
             let raw: String = plugin.memory_get_val(&inputs[0])?;
-            // Parse and log the event; full routing wired via emit_event() on PluginRuntime.
-            let event: serde_json::Value = serde_json::from_str(&raw)?;
-            tracing::debug!("dx_emit_event: {event}");
+            let parsed: serde_json::Value = serde_json::from_str(&raw)?;
+
+            let name = parsed["name"]
+                .as_str()
+                .ok_or_else(|| anyhow::anyhow!("dx_emit_event: JSON must have a string 'name' field"))?
+                .to_owned();
+            let payload = parsed.get("payload").cloned().unwrap_or(serde_json::Value::Null);
+
+            let arc = extract_ctx(&user_data)?;
+            let (caller, event_tx) = {
+                let ctx = arc.lock().map_err(|_| anyhow::anyhow!("CallCtx mutex poisoned"))?;
+                (ctx.caller.clone(), ctx.event_tx.clone())
+            };
+
+            let event = PluginEvent { source: EventSource::Plugin(caller.clone()), name, payload };
+            let session_id = get_call_session_id();
+            let client = CALL_CLIENT.with(|c| c.borrow().clone());
+            let session = SessionCtx { session_id, user_id: None, client, caller: Some(caller) };
+
+            // Fire-and-forget — the dispatch task logs errors independently.
+            let _ = event_tx.send((event, session));
             Ok(())
         },
     )

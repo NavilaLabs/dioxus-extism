@@ -8,8 +8,9 @@ use dioxus_extism_protocol::{
 };
 
 use crate::server_fns::{
-    get_component_resolution, get_override_map, get_plugin_state as server_get_plugin_state,
-    get_route_transforms, get_slot_content, handle_plugin_interaction,
+    get_component_resolution, get_override_map, get_plugin_page,
+    get_plugin_state as server_get_plugin_state, get_route_transforms, get_slot_content,
+    handle_plugin_interaction,
 };
 use crate::session::use_session_id;
 
@@ -320,6 +321,68 @@ fn PluginAwareRouterInner(path: String, outlet: Element) -> Element {
             }
         }
         _ => outlet,
+    }
+}
+
+// ── PluginPageOutlet ──────────────────────────────────────────────────────────
+
+/// Renders a plugin-declared page for the given relative path.
+///
+/// Place this inside the component that handles your wildcard route entry
+/// (e.g. `#[route("/p/:..segments")]`). Reconstruct the relative path from
+/// the route's captured segments and pass it as `relative_path`.
+///
+/// # Example
+/// ```ignore
+/// #[component]
+/// fn PluginPage(segments: Vec<String>) -> Element {
+///     let path = format!("/{}", segments.join("/"));
+///     let bypass = use_signal(|| false);
+///     rsx! {
+///         PluginPageOutlet {
+///             relative_path: path,
+///             bypass_layout_signal: bypass,
+///             not_found: rsx! { p { "Page not found." } },
+///         }
+///     }
+/// }
+/// ```
+#[component]
+pub fn PluginPageOutlet(
+    /// Path after the host prefix, e.g. `"/notes"` or `"/notes/42"`.
+    relative_path: String,
+    /// Element rendered when no plugin has claimed the path (404 case).
+    #[props(default)]
+    not_found: Option<Element>,
+    /// When `Some`, set to the plugin's `bypass_layout` value once the page loads.
+    /// Lets the host conditionally skip its layout wrapper.
+    #[props(default)]
+    bypass_layout_signal: Option<Signal<bool>>,
+) -> Element {
+    let session_id = use_session_id();
+    let client_caps = use_context::<ClientCapabilities>();
+
+    let page = use_resource(move || {
+        let path = relative_path.clone();
+        let sid: SessionId = session_id.read().clone();
+        let caps = client_caps.clone();
+        async move { get_plugin_page(path, sid, caps).await }
+    });
+
+    match page.read().as_ref() {
+        None => rsx! {},
+        Some(Err(e)) => rsx! {
+            p { class: "plugin-page-error", "Plugin page error: {e}" }
+        },
+        Some(Ok(None)) => not_found.unwrap_or_else(|| rsx! {}),
+        Some(Ok(Some(output))) => {
+            if let Some(mut sig) = bypass_layout_signal {
+                sig.set(output.bypass_layout);
+            }
+            rsx! {
+                PluginViewRenderer { view: output.view.clone(), session_id }
+            }
+        }
     }
 }
 

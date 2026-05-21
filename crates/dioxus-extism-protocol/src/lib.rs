@@ -155,6 +155,12 @@ pub struct PluginManifest {
     pub event_subscriptions: Vec<String>,
     pub transforms: Vec<TransformDeclaration>,
     pub host_capabilities: Vec<HostCapability>,
+    /// Inbound HTTP API routes this plugin wants to handle.
+    #[serde(default)]
+    pub api_routes: Vec<ApiRouteDeclaration>,
+    /// New view pages this plugin provides (served under the host's catch-all prefix).
+    #[serde(default)]
+    pub page_routes: Vec<PageRouteDeclaration>,
 }
 
 /// State scope declared by a plugin in its manifest.
@@ -459,6 +465,10 @@ pub struct OverrideMap {
     pub required_app_version: u32,
     /// Per-plugin requirements for targeted messaging.
     pub plugin_requirements: HashMap<PluginId, PluginClientRequirement>,
+    /// URL prefix under which plugin page routes are served, e.g. `"/p"`.
+    /// `None` when no page route prefix is configured.
+    #[serde(default)]
+    pub page_route_prefix: Option<String>,
 }
 
 /// Output of a full SSR render pass for one route.
@@ -549,4 +559,137 @@ pub struct HttpResponse {
     pub status: u16,
     pub headers: HashMap<String, String>,
     pub body: String,
+}
+
+// ── Plugin API route types ────────────────────────────────────────────────────
+
+/// HTTP method for a plugin-declared inbound API route.
+#[non_exhaustive]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "UPPERCASE")]
+pub enum HttpMethod {
+    Get,
+    Post,
+    Put,
+    Patch,
+    Delete,
+}
+
+impl HttpMethod {
+    /// Returns the method as an uppercase ASCII string slice.
+    #[must_use]
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Self::Get => "GET",
+            Self::Post => "POST",
+            Self::Put => "PUT",
+            Self::Patch => "PATCH",
+            Self::Delete => "DELETE",
+        }
+    }
+}
+
+/// One inbound HTTP API route declared by a plugin in its manifest.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ApiRouteDeclaration {
+    pub method: HttpMethod,
+    /// Full path, e.g. `"/api/notes"` or `"/api/notes/:id"`.
+    /// Param segments use `:param` syntax (same as `RoutePattern`).
+    pub path: String,
+    /// The WASM export name to invoke when this route is hit.
+    /// The export must accept `Json<ApiRequest>` and return `Json<ApiResponse>`.
+    pub handler_fn: String,
+}
+
+impl ApiRouteDeclaration {
+    /// Declare a `GET` route handled by `handler_fn`.
+    pub fn get(path: impl Into<String>, handler_fn: impl Into<String>) -> Self {
+        Self { method: HttpMethod::Get, path: path.into(), handler_fn: handler_fn.into() }
+    }
+    /// Declare a `POST` route handled by `handler_fn`.
+    pub fn post(path: impl Into<String>, handler_fn: impl Into<String>) -> Self {
+        Self { method: HttpMethod::Post, path: path.into(), handler_fn: handler_fn.into() }
+    }
+    /// Declare a `PUT` route handled by `handler_fn`.
+    pub fn put(path: impl Into<String>, handler_fn: impl Into<String>) -> Self {
+        Self { method: HttpMethod::Put, path: path.into(), handler_fn: handler_fn.into() }
+    }
+    /// Declare a `PATCH` route handled by `handler_fn`.
+    pub fn patch(path: impl Into<String>, handler_fn: impl Into<String>) -> Self {
+        Self { method: HttpMethod::Patch, path: path.into(), handler_fn: handler_fn.into() }
+    }
+    /// Declare a `DELETE` route handled by `handler_fn`.
+    pub fn delete(path: impl Into<String>, handler_fn: impl Into<String>) -> Self {
+        Self { method: HttpMethod::Delete, path: path.into(), handler_fn: handler_fn.into() }
+    }
+}
+
+/// Request payload delivered to a plugin's API handler export.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ApiRequest {
+    /// Path parameters extracted by the router, e.g. `{"id": "42"}`.
+    pub path_params: HashMap<String, String>,
+    /// Query string parameters, e.g. `{"page": "2"}`.
+    pub query_params: HashMap<String, String>,
+    /// Request headers as lowercase-name → value pairs.
+    pub headers: HashMap<String, String>,
+    /// JSON body, if present and parseable. `None` for GET/DELETE or empty bodies.
+    pub body: Option<serde_json::Value>,
+}
+
+/// Response returned by a plugin's API handler export.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ApiResponse {
+    /// HTTP status code, e.g. `200`, `404`.
+    pub status: u16,
+    /// Additional response headers to include.
+    pub headers: HashMap<String, String>,
+    /// JSON body. Omit or set to `None` for empty responses.
+    pub body: Option<serde_json::Value>,
+}
+
+impl Default for ApiResponse {
+    fn default() -> Self {
+        Self { status: 200, headers: HashMap::new(), body: None }
+    }
+}
+
+// ── Plugin page route types ───────────────────────────────────────────────────
+
+/// One view page route declared by a plugin in its manifest.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PageRouteDeclaration {
+    /// Path relative to the host's catch-all prefix, e.g. `"/notes"` or `"/notes/:id"`.
+    /// Uses `:param` syntax for path parameters.
+    pub path: String,
+    /// Optional page title (host may use for `<title>` or breadcrumbs).
+    pub title: Option<String>,
+    /// WASM export name: `fn(Json<PageRouteInput>) -> FnResult<Json<PluginView>>`.
+    pub render_fn: String,
+    /// When `true` the plugin wants a full-page render — the host should skip its normal
+    /// layout wrapper. Read from `PageRouteOutput` and act on it in the host component.
+    #[serde(default)]
+    pub bypass_layout: bool,
+}
+
+/// Input delivered to a plugin's page route render export.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PageRouteInput {
+    /// Path parameters extracted from the declared pattern, e.g. `{"id": "42"}`.
+    pub path_params: HashMap<String, String>,
+    /// Query string parameters.
+    pub query_params: HashMap<String, String>,
+    /// Caller's session.
+    pub session: SessionCtx,
+}
+
+/// Returned by the `get_plugin_page` server function.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PageRouteOutput {
+    /// The rendered view — pass to `PluginViewRenderer`.
+    pub view: PluginView,
+    /// Whether the plugin requested full-page rendering (no host layout).
+    pub bypass_layout: bool,
+    /// Optional page title set by the plugin.
+    pub title: Option<String>,
 }

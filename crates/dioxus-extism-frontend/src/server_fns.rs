@@ -1,7 +1,7 @@
 use dioxus::prelude::*;
 use dioxus_extism_protocol::{
-    ClientCapabilities, ComponentResolution, OverrideMap, RouteTransforms, SessionId, SlotContent,
-    ViewUpdate,
+    ClientCapabilities, ComponentResolution, OverrideMap, PageRouteOutput, RouteTransforms,
+    SessionId, SlotContent, ViewUpdate,
 };
 
 /// Fetch the current `OverrideMap` at boot time.
@@ -176,6 +176,35 @@ pub async fn get_component_resolution(
 
     runtime
         .resolve_component(&component_name, props, &session)
+        .await
+        .map_err(|e| ServerFnError::new(e.to_string()))
+}
+
+/// Render a plugin-declared page route.
+///
+/// `relative_path` is the path after the host's configured prefix, e.g. `"/notes"`.
+/// Returns `None` if no plugin has claimed that path (caller should render a 404).
+#[server]
+pub async fn get_plugin_page(
+    relative_path: String,
+    session_id: SessionId,
+    caps: ClientCapabilities,
+) -> Result<Option<PageRouteOutput>, ServerFnError> {
+    use std::sync::Arc;
+
+    use dioxus_extism_host::PluginRuntime;
+    use dioxus_extism_protocol::SessionCtx;
+
+    let Some(runtime) = dioxus::fullstack::FullstackContext::current()
+        .and_then(|ctx| ctx.extension::<Arc<PluginRuntime>>())
+    else {
+        tracing::warn!("get_plugin_page: PluginRuntime not found in request extensions — add .layer(axum::Extension(runtime)) to your router");
+        return Ok(None);
+    };
+
+    let session = SessionCtx { session_id, user_id: None, client: caps, caller: None };
+    runtime
+        .render_page_route(&relative_path, &session)
         .await
         .map_err(|e| ServerFnError::new(e.to_string()))
 }

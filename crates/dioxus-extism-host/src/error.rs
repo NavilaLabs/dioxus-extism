@@ -45,6 +45,17 @@ pub enum PluginRuntimeError {
 
     #[error("persistence error: {0}")]
     Persistence(#[from] PersistenceError),
+
+    #[error("API route conflict: {method} {path} — claimed by {first:?} and {second:?}")]
+    ApiRouteConflict {
+        method: String,
+        path: String,
+        first: PluginId,
+        second: PluginId,
+    },
+
+    #[error("page route conflict: {path} — claimed by {first:?} and {second:?}")]
+    PageRouteConflict { path: String, first: PluginId, second: PluginId },
 }
 
 /// Errors from `dx_invoke` host function calls.

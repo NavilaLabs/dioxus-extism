@@ -6,7 +6,9 @@ mod view;
 pub use extism_pdk;
 
 pub use dioxus_extism_protocol::{
-    AttrValue, BoundEventHandler, ClientCapabilities, DomEvent, HandlerId, HookCall, HookResult,
+    ApiRequest, ApiResponse, ApiRouteDeclaration, HttpMethod,
+    PageRouteDeclaration, PageRouteInput, PageRouteOutput,
+    AttrValue, BoundEventHandler, ClientCapabilities, DomEvent, HandlerId, HookCall, HookRegistration, HookResult,
     HostCapability, HostComponentRef, NodeSelector, PluginEvent, PluginId, PluginManifest,
     PluginView, PriorityHint, RoutePattern, Selector, SessionCtx, SessionId, SlotContent,
     SlotRegistration, StateScope, TransformDeclaration, TransformInput, TransformOp,
@@ -18,8 +20,10 @@ pub use view::{div, element, incompatible, original_content, span, text, ViewBui
 /// Prelude for plugin authors — import everything with one `use`.
 pub mod prelude {
     pub use crate::{
+        ApiRequest, ApiResponse, ApiRouteDeclaration, HttpMethod,
+        PageRouteDeclaration, PageRouteInput, PageRouteOutput,
         AttrValue, BoundEventHandler, ClientCapabilities, DioxusPlugin, DomEvent, EventSubscriber,
-        HandlerId, HookCall, HookHandler, HookResult, HostCapability, HostComponentRef,
+        HandlerId, HookCall, HookHandler, HookRegistration, HookResult, HostCapability, HostComponentRef,
         InteractionHandler, NodeSelector, OnLoad, OnUnload, PdkError, PluginCtx, PluginEvent,
         PluginId, PluginManifest, PluginView, PriorityHint, RoutePattern, Selector, SessionCtx,
         SessionId, SlotContent, SlotRegistration, SlotProvider, StateScope, TransformDeclaration,
@@ -141,6 +145,7 @@ pub mod host_fns {
         pub fn dx_emit_event(event: String);
         pub fn dx_invoke(name: &str, args: String) -> String;
         pub fn dx_log(level: &str, message: &str);
+        pub fn dx_plugin_state_get(target_plugin_id: &str, key: &str) -> String;
     }
 }
 
@@ -179,6 +184,31 @@ macro_rules! __plugin_slots_inner {
     ($n:expr, $first:ty, $($rest:ty,)*) => {
         $crate::__slot_fn!($first);
         $crate::__plugin_slots_inner!($n + 1usize, $($rest,)*);
+    };
+}
+
+/// Generate a named WASM export that handles an API route.
+///
+/// The generated function receives `Json<ApiRequest>` and returns `Json<ApiResponse>`.
+/// The export name must match the `handler_fn` field in `ApiRouteDeclaration`.
+///
+/// # Example
+/// ```ignore
+/// api_route_fn!(handle_get_notes, |req: ApiRequest| {
+///     Ok(ApiResponse { status: 200, body: Some(serde_json::json!([])), ..Default::default() })
+/// });
+/// ```
+#[macro_export]
+macro_rules! api_route_fn {
+    ($export_name:ident, $handler:expr) => {
+        #[::extism_pdk::plugin_fn]
+        pub fn $export_name(
+            input: ::extism_pdk::Json<$crate::ApiRequest>,
+        ) -> ::extism_pdk::FnResult<::extism_pdk::Json<$crate::ApiResponse>> {
+            let result: Result<$crate::ApiResponse, $crate::PdkError> = ($handler)(input.0);
+            let resp = result.map_err(|e| ::extism_pdk::Error::msg(e.to_string()))?;
+            Ok(::extism_pdk::Json(resp))
+        }
     };
 }
 
