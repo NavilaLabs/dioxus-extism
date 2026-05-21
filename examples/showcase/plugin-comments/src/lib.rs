@@ -76,7 +76,7 @@ impl SlotProvider for CommentsPlugin {
 
 plugin! { type: CommentsPlugin, slots: [CommentsPlugin] }
 
-/// `GET /api/comments/:slug` — returns all comments for a post as JSON.
+// GET /api/comments/:slug — returns all comments for a post as JSON.
 api_route_fn!(api_comments_get, |req: ApiRequest| {
     let slug = req.path_params.get("slug").cloned().unwrap_or_default();
     let comments = read_comments_for(&slug).map_err(|e| PdkError::HostFn(e.to_string()))?;
@@ -87,7 +87,7 @@ api_route_fn!(api_comments_get, |req: ApiRequest| {
     })
 });
 
-/// `POST /api/comments` — body `{ "slug": "...", "text": "..." }`.
+// POST /api/comments — body `{ "slug": "...", "text": "..." }`.
 api_route_fn!(api_comments_post, |req: ApiRequest| {
     let body = req.body.as_ref().ok_or_else(|| PdkError::HostFn("missing body".into()))?;
     let slug = body["slug"].as_str().unwrap_or("").to_owned();
@@ -143,8 +143,7 @@ pub fn render_recent_comments(Json(_input): Json<PageRouteInput>) -> FnResult<Js
                                     .class("comment-item")
                                     .child(text(format!("• {}", c.text)))
                                     .build()
-                            })
-                            .collect::<Vec<_>>(),
+                            }),
                     )
                     .build(),
             );
@@ -207,8 +206,7 @@ fn build_comments_view(slug: &str, comments: &[Comment], draft: &str) -> PluginV
                             .class("comment-item")
                             .child(text(format!("• {}", c.text)))
                             .build()
-                    })
-                    .collect::<Vec<_>>(),
+                    }),
             )
             .build()
     };

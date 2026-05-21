@@ -190,6 +190,7 @@ async fn get_page_notes(
 // ── Routes ────────────────────────────────────────────────────────────────────
 
 #[derive(Debug, Clone, Routable, PartialEq)]
+#[allow(clippy::enum_variant_names)]
 enum Route {
     #[route("/")]
     HomePage,

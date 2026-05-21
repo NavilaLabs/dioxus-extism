@@ -1,3 +1,13 @@
+//! Shared protocol types for `dioxus-extism`.
+//!
+//! Every message crossing the WASM boundary uses the types defined here.
+//! This crate has no dependency on `extism`, `dioxus`, or any platform-specific
+//! code, so it compiles for both `wasm32-unknown-unknown` (plugins) and native
+//! host targets.
+//!
+//! All public enums are `#[non_exhaustive]` — new variants may be added in minor
+//! versions without a major semver bump.
+
 use std::collections::{HashMap, HashSet};
 
 use serde::{Deserialize, Serialize};
@@ -205,39 +215,63 @@ pub enum HostCapability {
 // ── Selectors ────────────────────────────────────────────────────────────────
 
 /// Addresses a point in the rendered layer that a transform can target.
+///
+/// The three layers map to increasing dynamism — see the architecture doc §1.7.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[non_exhaustive]
 pub enum Selector {
-    // Layer 1
+    // ── Layer 1 ──────────────────────────────────────────────────────────────
+    /// A named `#[overridable]` or `OverridableComponent` boundary.
     Component(String),
+    /// A `PluginSlot` by name — targets the slot's contribution list.
     Slot(String),
+    /// An element carrying `data-plugin-slot="value"` inside any `PluginView` tree.
     DataPluginSlot(String),
-    // Layer 2
+
+    // ── Layer 2 ──────────────────────────────────────────────────────────────
+    /// Targets the rendered output of a route matching this pattern.
     Route(RoutePattern),
-    // Layer 3
+
+    // ── Layer 3 ──────────────────────────────────────────────────────────────
+    /// Selects nodes within the `PluginView` tree produced by `outer`.
     Within {
         outer: Box<Self>,
         inner: NodeSelector,
     },
-    // Composition
+
+    // ── Composition ──────────────────────────────────────────────────────────
+    /// Applies to any selector in the list that matches.
     Any(Vec<Self>),
 }
 
 /// Selects specific nodes within a `PluginView` tree.
+///
+/// Default traversal is shallow (direct children of the outer selection only).
+/// Wrap any selector in [`NodeSelector::Recursive`] to match at any depth.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[non_exhaustive]
 pub enum NodeSelector {
+    /// Matches any element with this HTML tag.
     Tag(String),
+    /// Matches any element whose class list contains this class.
     HasClass(String),
+    /// Matches any `HostComponent` reference with this name.
     HostComponent(String),
+    /// Matches any element whose `name` field equals this string.
     Name(String),
+    /// Matches any element carrying `data-<key>="<value>"`.
     DataAttr(String, String),
+    /// Matches the first child of the outer selection.
     First,
+    /// Matches the last child of the outer selection.
     Last,
+    /// Matches the child at this 0-based index.
     Index(usize),
+    /// Both inner selectors must match.
     And(Box<Self>, Box<Self>),
+    /// Either inner selector must match.
     Or(Box<Self>, Box<Self>),
-    /// Apply inner selector recursively at any depth.
+    /// Apply the inner selector recursively at any depth in the tree.
     Recursive(Box<Self>),
 }
 
@@ -257,14 +291,29 @@ pub struct TransformDeclaration {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[non_exhaustive]
 pub enum TransformOp {
+    // ── Route / slot level (Layers 1 & 2) ────────────────────────────────────
+    /// Render the plugin view before the selected output.
     InjectBefore,
+    /// Render the plugin view after the selected output.
     InjectAfter,
+    /// Wrap the selected output. The plugin view may embed
+    /// `HostComponent("__content__")` as a placeholder for the original.
+    /// Multiple Wrap plugins form a sequential pipeline (see §1.5).
     Wrap,
+
+    // ── Node level (Layer 3) ──────────────────────────────────────────────────
+    /// Replace the selected node entirely with the plugin view.
     Replace,
+    /// Wrap the selected node. The plugin view may embed
+    /// `HostComponent("__target__")` as a placeholder for the original node.
     WrapNode,
+    /// Insert the plugin view before the selected node.
     InsertBefore,
+    /// Insert the plugin view after the selected node.
     InsertAfter,
+    /// Add a CSS class to the selected node (no new view rendered).
     AddClass(String),
+    /// Set an attribute on the selected node (no new view rendered).
     SetAttr(String, AttrValue),
 }
 
@@ -578,7 +627,7 @@ pub enum HttpMethod {
 impl HttpMethod {
     /// Returns the method as an uppercase ASCII string slice.
     #[must_use]
-    pub fn as_str(&self) -> &'static str {
+    pub const fn as_str(&self) -> &'static str {
         match self {
             Self::Get => "GET",
             Self::Post => "POST",

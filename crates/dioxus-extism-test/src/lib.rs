@@ -241,16 +241,33 @@ impl TestRuntime {
 ///
 /// Panics with a descriptive message if the assertion fails.
 ///
+/// # Patterns
+///
+/// | Pattern | What it checks |
+/// |---------|---------------|
+/// | `element("tag")` | Top-level variant is `Element` and `.tag` matches |
+/// | `text("str")` | Top-level variant is `Text` and content matches |
+/// | `fragment` | Top-level variant is `Fragment` |
+/// | `empty` | Top-level variant is `Empty` |
+/// | `incompatible` | Top-level variant is `Incompatible` |
+/// | `host_component("name")` | Top-level variant is `HostComponent` and `.name` matches |
+/// | `has_class("cls") in $view` | `$view` is an `Element` containing the class |
+/// | `has_attr("k", "v") in $view` | `$view` is an `Element` with a string attr |
+/// | `child_count(N) in $view` | `$view` is an `Element` or `Fragment` with N children |
+///
 /// # Examples
 ///
 /// ```ignore
 /// assert_view!(view, element("div"));
 /// assert_view!(view, text("hello"));
-/// assert_view!(view, fragment);
-/// assert_view!(view, empty);
+/// assert_view!(view, has_class("card") in view);
+/// assert_view!(view, has_attr("id", "main") in view);
+/// assert_view!(view, child_count(3) in view);
 /// ```
 #[macro_export]
 macro_rules! assert_view {
+    // ── Variant checks ────────────────────────────────────────────────────────
+
     ($view:expr, element($tag:literal)) => {
         match &$view {
             $crate::dioxus_extism_protocol::PluginView::Element(el) => {
@@ -267,6 +284,7 @@ macro_rules! assert_view {
             ),
         }
     };
+
     ($view:expr, text($content:literal)) => {
         match &$view {
             $crate::dioxus_extism_protocol::PluginView::Text(t) => {
@@ -280,22 +298,147 @@ macro_rules! assert_view {
             other => panic!("expected PluginView::Text({content:?}), got {other:?}", content = $content),
         }
     };
+
     ($view:expr, fragment) => {
         match &$view {
             $crate::dioxus_extism_protocol::PluginView::Fragment(_) => {}
             other => panic!("expected PluginView::Fragment, got {other:?}"),
         }
     };
+
     ($view:expr, empty) => {
         match &$view {
             $crate::dioxus_extism_protocol::PluginView::Empty => {}
             other => panic!("expected PluginView::Empty, got {other:?}"),
         }
     };
+
     ($view:expr, incompatible) => {
         match &$view {
             $crate::dioxus_extism_protocol::PluginView::Incompatible { .. } => {}
             other => panic!("expected PluginView::Incompatible, got {other:?}"),
         }
     };
+
+    ($view:expr, host_component($name:literal)) => {
+        match &$view {
+            $crate::dioxus_extism_protocol::PluginView::HostComponent(r) => {
+                assert_eq!(
+                    r.name.as_str(), $name,
+                    "expected HostComponent({name:?}), got HostComponent({got:?})",
+                    name = $name,
+                    got = r.name
+                );
+            }
+            other => panic!(
+                "expected PluginView::HostComponent({name:?}), got {other:?}",
+                name = $name,
+            ),
+        }
+    };
+
+    // ── Element property checks ───────────────────────────────────────────────
+
+    (has_class($cls:literal) in $view:expr) => {{
+        match &$view {
+            $crate::dioxus_extism_protocol::PluginView::Element(el) => {
+                let class_val = el.attrs.iter()
+                    .find(|(k, _)| k == "class")
+                    .and_then(|(_, v)| match v {
+                        $crate::dioxus_extism_protocol::AttrValue::String(s) => Some(s.as_str()),
+                        _ => None,
+                    })
+                    .unwrap_or("");
+                let has = class_val.split_whitespace().any(|c| c == $cls);
+                assert!(has, "expected class {cls:?} in {class_val:?}", cls = $cls);
+            }
+            other => panic!("assert_view!(has_class): expected Element, got {other:?}"),
+        }
+    }};
+
+    (has_attr($key:literal, $val:literal) in $view:expr) => {{
+        match &$view {
+            $crate::dioxus_extism_protocol::PluginView::Element(el) => {
+                let found = el.attrs.iter().any(|(k, v)| {
+                    k == $key && matches!(v, $crate::dioxus_extism_protocol::AttrValue::String(s) if s == $val)
+                });
+                assert!(
+                    found,
+                    "expected attr {key:?}={val:?} on <{tag}>",
+                    key = $key, val = $val, tag = el.tag
+                );
+            }
+            other => panic!("assert_view!(has_attr): expected Element, got {other:?}"),
+        }
+    }};
+
+    (child_count($n:expr) in $view:expr) => {{
+        let count = match &$view {
+            $crate::dioxus_extism_protocol::PluginView::Element(el) => el.children.len(),
+            $crate::dioxus_extism_protocol::PluginView::Fragment(children) => children.len(),
+            other => panic!("assert_view!(child_count): expected Element or Fragment, got {other:?}"),
+        };
+        assert_eq!(count, $n, "expected {n} children, got {count}", n = $n);
+    }};
+}
+
+// ── assert_slot! ──────────────────────────────────────────────────────────────
+
+/// Assert properties of a `Vec<SlotContent>` returned by `render_slot`.
+///
+/// # Panics
+///
+/// Panics with a descriptive message if the assertion fails.
+///
+/// # Patterns
+///
+/// | Pattern | What it checks |
+/// |---------|---------------|
+/// | `count(N)` | Exactly N contributions |
+/// | `non_empty` | At least one contribution |
+/// | `empty` | No contributions |
+/// | `from("org/plugin")` | At least one contribution from that plugin ID |
+///
+/// # Examples
+///
+/// ```ignore
+/// assert_slot!(contents, count(2));
+/// assert_slot!(contents, non_empty);
+/// assert_slot!(contents, from("example/my-plugin"));
+/// ```
+#[macro_export]
+macro_rules! assert_slot {
+    ($contents:expr, count($n:expr)) => {
+        assert_eq!(
+            $contents.len(), $n,
+            "expected {n} slot contributions, got {got}",
+            n = $n, got = $contents.len()
+        );
+    };
+
+    ($contents:expr, non_empty) => {
+        assert!(
+            !$contents.is_empty(),
+            "expected at least one slot contribution, got none"
+        );
+    };
+
+    ($contents:expr, empty) => {
+        assert!(
+            $contents.is_empty(),
+            "expected no slot contributions, got {n}",
+            n = $contents.len()
+        );
+    };
+
+    ($contents:expr, from($plugin_id:literal)) => {{
+        let found = $contents.iter().any(|c| c.plugin_id.0 == $plugin_id);
+        assert!(
+            found,
+            "expected a contribution from plugin {id:?}, but none found. \
+             Present: {present:?}",
+            id = $plugin_id,
+            present = $contents.iter().map(|c| c.plugin_id.0.as_str()).collect::<Vec<_>>()
+        );
+    }};
 }

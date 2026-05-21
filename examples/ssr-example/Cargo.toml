@@ -1,0 +1,21 @@
+[package]
+name = "ssr-example"
+version = "0.1.0"
+edition = "2024"
+
+[[bin]]
+name = "ssr-example"
+path = "src/main.rs"
+
+[dependencies]
+dioxus-extism-frontend = { path = "../../crates/dioxus-extism-frontend", features = ["server"] }
+dioxus-extism-host     = { path = "../../crates/dioxus-extism-host" }
+dioxus-extism-protocol = { path = "../../crates/dioxus-extism-protocol" }
+dioxus                 = { workspace = true }
+dioxus-ssr             = "0.7"
+tokio                  = { workspace = true }
+tracing                = { workspace = true }
+tracing-subscriber     = "0.3"
+
+[lints]
+workspace = true

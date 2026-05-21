@@ -122,7 +122,7 @@ pub fn on_load(Json(session): Json<SessionCtx>) -> FnResult<()> {
     Ok(())
 }
 
-/// `GET /api/stats` — aggregated view / comment / reaction counts for all posts.
+// GET /api/stats — aggregated view / comment / reaction counts for all posts.
 api_route_fn!(api_stats_get, |_req: ApiRequest| {
     let views: HashMap<String, u64> = read_global(VIEWS_KEY)?;
     let comment_counts: HashMap<String, u64> = read_global(COMMENT_COUNTS_KEY)?;

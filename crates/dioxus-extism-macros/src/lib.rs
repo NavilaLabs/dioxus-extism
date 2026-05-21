@@ -1,3 +1,8 @@
+//! Proc-macro attributes for `dioxus-extism`.
+//!
+//! Currently provides `#[overridable]` for marking Dioxus components as
+//! plugin-extensible via the Layer 1 override mechanism.
+
 use proc_macro::TokenStream;
 use proc_macro2::Span;
 use quote::quote;

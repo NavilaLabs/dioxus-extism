@@ -9,5 +9,7 @@ pub use components::{
 };
 pub use server_fns::{get_plugin_page, handle_plugin_interaction};
 pub use session::{DesktopSessionProvider, SessionProviderRoot, WebSessionProvider, use_session_id};
+#[cfg(not(target_arch = "wasm32"))]
+pub use session::MobileSessionProvider;
 
 pub use dioxus_extism_protocol::{RouteTransforms, PROTOCOL_VERSION};

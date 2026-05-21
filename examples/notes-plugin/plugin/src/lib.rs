@@ -1,4 +1,5 @@
 //! notes-plugin — demonstrates `dx_invoke` and `on_interaction`.
+#![allow(clippy::unnecessary_wraps)]
 //!
 //! Slot "page-notes": reads `current_page` from session state (set by the host
 //! before `render_slot`), calls `get_notes` to fetch notes from the host store,

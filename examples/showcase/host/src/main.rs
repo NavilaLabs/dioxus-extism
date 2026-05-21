@@ -4,7 +4,7 @@
 //! - `showcase/comments` — slot, API routes, page route, global/session state,
 //!   interactions, event emission.
 //! - `showcase/stats`    — slot, API route, page route, event subscription,
-//!   hook handling, route transform, global state, interactions, on_load.
+//!   hook handling, route transform, global state, interactions, `on_load`.
 //!
 //! **To run:**
 //! ```
@@ -86,7 +86,6 @@ fn server_main() {
             }
         })
         .register_invocation("get_post", None, {
-            let posts = posts.clone();
             move |args: serde_json::Value, _session| {
                 let posts = posts.clone();
                 async move {
@@ -249,7 +248,7 @@ enum Route {
     #[route("/p/:..segments")]
     PluginPage { segments: Vec<String> },
     #[end_layout]
-    /// Catch-all 404 — outside AppLayout so it renders without plugin transforms.
+    /// Catch-all 404 — outside `AppLayout` so it renders without plugin transforms.
     #[route("/:..segments")]
     NotFound { segments: Vec<String> },
 }
@@ -348,13 +347,11 @@ fn PostPage(slug: String) -> Element {
 
     // Fetch comments slot with slug pre-set.
     let comments_slot = {
-        let slug = slug.clone();
         let sid: SessionId = session_id.read().clone();
-        let caps = client_caps.clone();
         use_resource(move || {
             let slug = slug.clone();
             let sid = sid.clone();
-            let caps = caps.clone();
+            let caps = client_caps.clone();
             async move { get_comments_slot(slug, sid, caps).await }
         })
     };

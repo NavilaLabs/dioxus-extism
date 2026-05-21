@@ -1132,6 +1132,7 @@ dependencies = [
  "dioxus-extism-host",
  "dioxus-extism-macros",
  "dioxus-extism-protocol",
+ "keyring",
  "serde",
  "serde_json",
  "tracing",
@@ -2727,6 +2728,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "keyring"
+version = "3.6.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "eebcc3aff044e5944a8fbaf69eb277d11986064cba30c468730e8b9909fb551c"
+dependencies = [
+ "log",
+ "zeroize",
+]
+
+[[package]]
 name = "konst"
 version = "0.2.20"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4248,6 +4259,20 @@ name = "spin"
 version = "0.9.8"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "6980e8d7511241f8acf4aebddbb1ff938df5eebe98691418c4468d0b72a96a67"
+
+[[package]]
+name = "ssr-example"
+version = "0.1.0"
+dependencies = [
+ "dioxus",
+ "dioxus-extism-frontend",
+ "dioxus-extism-host",
+ "dioxus-extism-protocol",
+ "dioxus-ssr",
+ "tokio",
+ "tracing",
+ "tracing-subscriber",
+]
 
 [[package]]
 name = "stable_deref_trait"

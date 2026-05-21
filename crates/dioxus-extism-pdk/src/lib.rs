@@ -1,3 +1,40 @@
+//! Plugin Development Kit for `dioxus-extism`.
+//!
+//! Provides the traits, macros, and view-builder DSL that plugin authors use to write
+//! Extism WASM plugins for Dioxus fullstack applications.
+//!
+//! # Quick start
+//!
+//! ```ignore
+//! use dioxus_extism_pdk::prelude::*;
+//! use dioxus_extism_pdk::plugin;
+//!
+//! struct MyPlugin;
+//!
+//! impl DioxusPlugin for MyPlugin {
+//!     fn manifest() -> PluginManifest {
+//!         PluginManifest {
+//!             id: PluginId("my-org/my-plugin".into()),
+//!             version: "0.1.0".into(),
+//!             slots: vec![SlotRegistration {
+//!                 name: "sidebar".into(),
+//!                 priority_hint: PriorityHint::Normal,
+//!             }],
+//!             ..Default::default()
+//!         }
+//!     }
+//! }
+//!
+//! impl SlotProvider for MyPlugin {
+//!     const SLOT_NAME: &'static str = "sidebar";
+//!     fn render(_ctx: &PluginCtx) -> Result<PluginView, PdkError> {
+//!         Ok(div().class("widget").child(text("Hello from plugin!")).build())
+//!     }
+//! }
+//!
+//! plugin! { type: MyPlugin, slots: [MyPlugin] }
+//! ```
+
 mod error;
 mod view;
 
@@ -15,7 +52,11 @@ pub use dioxus_extism_protocol::{
     TransformOutput, ViewElement, ViewUpdate,
 };
 pub use error::PdkError;
-pub use view::{div, element, incompatible, original_content, span, text, ViewBuilder};
+pub use view::{
+    a, button, div, element, form, fragment, h1, h2, h3, host, img, incompatible,
+    incompatible_with_fallback, input, label, li, ol, original_content, original_target,
+    p, span, text, ul, HostComponentBuilder, ViewBuilder,
+};
 
 /// Prelude for plugin authors — import everything with one `use`.
 pub mod prelude {
@@ -28,7 +69,9 @@ pub mod prelude {
         PluginId, PluginManifest, PluginView, PriorityHint, RoutePattern, Selector, SessionCtx,
         SessionId, SlotContent, SlotRegistration, SlotProvider, StateScope, TransformDeclaration,
         TransformInput, TransformOp, TransformOutput, TransformProvider, ViewElement, ViewUpdate,
-        div, element, incompatible, original_content, span, text,
+        a, button, div, element, form, fragment, h1, h2, h3, host, img, incompatible,
+        incompatible_with_fallback, input, label, li, ol, original_content, original_target,
+        p, span, text, ul, HostComponentBuilder, ViewBuilder,
     };
 }
 
@@ -149,19 +192,27 @@ pub mod host_fns {
     }
 }
 
-/// Macro to wire up WASM exports for a `DioxusPlugin` type.
+/// Wire up WASM exports for a `DioxusPlugin` type.
 ///
-/// Generates `manifest()` and one export per slot provider, named
-/// `slot_<N>` where N is the 0-based index. The host matches exports
-/// to slot names via the manifest at load time (Phase 2).
+/// Generates a `manifest()` export and one `slot_render` export per slot provider.
+/// For hooks, transforms, events, interactions, and lifecycle hooks use the
+/// dedicated standalone macros: [`hook_export!`], [`transform_export!`],
+/// [`events_export!`], [`interactions_export!`], [`on_load_export!`], [`on_unload_export!`].
 ///
 /// # Example
 /// ```ignore
 /// plugin! { type: HelloPlugin, slots: [HelloPlugin] }
+///
+/// // Optional additional exports (call after plugin!):
+/// hook_export!(HelloPlugin, before_save);
+/// transform_export!(HelloPlugin, wrap_header);
+/// on_load_export!(HelloPlugin);
+/// events_export!(HelloPlugin);
+/// interactions_export!(HelloPlugin);
 /// ```
 #[macro_export]
 macro_rules! plugin {
-    (type: $plugin:ty, slots: [$($slot_impl:ty),* $(,)?]) => {
+    (type: $plugin:ty, slots: [$($slot_impl:ty),* $(,)?] $(,)?) => {
         #[::extism_pdk::plugin_fn]
         pub fn manifest()
             -> ::extism_pdk::FnResult<::extism_pdk::Json<$crate::PluginManifest>>
@@ -172,6 +223,16 @@ macro_rules! plugin {
         }
 
         $crate::__plugin_slots_inner!(0usize, $($slot_impl,)*);
+    };
+    (type: $plugin:ty $(,)?) => {
+        #[::extism_pdk::plugin_fn]
+        pub fn manifest()
+            -> ::extism_pdk::FnResult<::extism_pdk::Json<$crate::PluginManifest>>
+        {
+            Ok(::extism_pdk::Json(
+                <$plugin as $crate::DioxusPlugin>::manifest()
+            ))
+        }
     };
 }
 
@@ -228,6 +289,153 @@ macro_rules! __slot_fn {
             let view = <$slot_impl as $crate::SlotProvider>::render(&ctx)
                 .map_err(|e| ::extism_pdk::Error::msg(e.to_string()))?;
             Ok(::extism_pdk::Json(view))
+        }
+    };
+}
+
+// ── Standalone export macros ─────────────────────────────────────────────────
+
+/// Generate a WASM hook export for a [`HookHandler`] implementation.
+///
+/// Pass the full export function name — by convention, `hook_<hook_name>` to match what
+/// the host runtime looks for based on the `HookRegistration::hook_name` in the manifest.
+/// The host calls this export with `(HookCall, SessionCtx)` and expects `HookResult`.
+///
+/// # Example
+/// ```ignore
+/// hook_export!(MyPlugin, hook_before_save);
+/// ```
+#[macro_export]
+macro_rules! hook_export {
+    ($plugin:ty, $fn_name:ident) => {
+        #[::extism_pdk::plugin_fn]
+        pub fn $fn_name(
+            input: ::extism_pdk::Json<($crate::HookCall, $crate::SessionCtx)>,
+        ) -> ::extism_pdk::FnResult<::extism_pdk::Json<$crate::HookResult>> {
+            let (call, session) = input.0;
+            let ctx = $crate::PluginCtx::from_session(session);
+            let result = <$plugin as $crate::HookHandler>::handle(call, &ctx)
+                .map_err(|e| ::extism_pdk::Error::msg(e.to_string()))?;
+            Ok(::extism_pdk::Json(result))
+        }
+    };
+}
+
+/// Generate a WASM transform export for a [`TransformProvider`] implementation.
+///
+/// Pass the full export function name — by convention, `transform_<fn_name>` to match what
+/// the host runtime looks for based on `TransformDeclaration::transform_fn` in the manifest.
+/// The host calls this export with [`TransformInput`] and expects [`TransformOutput`].
+///
+/// # Example
+/// ```ignore
+/// transform_export!(MyPlugin, transform_wrap_header);
+/// ```
+#[macro_export]
+macro_rules! transform_export {
+    ($plugin:ty, $fn_name:ident) => {
+        #[::extism_pdk::plugin_fn]
+        pub fn $fn_name(
+            input: ::extism_pdk::Json<$crate::TransformInput>,
+        ) -> ::extism_pdk::FnResult<::extism_pdk::Json<$crate::TransformOutput>> {
+            let session = input.0.session.clone();
+            let ctx = $crate::PluginCtx::from_session(session);
+            let result = <$plugin as $crate::TransformProvider>::transform(input.0, &ctx)
+                .map_err(|e| ::extism_pdk::Error::msg(e.to_string()))?;
+            Ok(::extism_pdk::Json(result))
+        }
+    };
+}
+
+/// Generate a WASM `on_event` export for an [`EventSubscriber`] implementation.
+///
+/// The host calls this export with `(PluginEvent, SessionCtx)`.
+///
+/// # Example
+/// ```ignore
+/// events_export!(MyPlugin);
+/// ```
+#[macro_export]
+macro_rules! events_export {
+    ($plugin:ty) => {
+        #[::extism_pdk::plugin_fn]
+        pub fn on_event(
+            input: ::extism_pdk::Json<($crate::PluginEvent, $crate::SessionCtx)>,
+        ) -> ::extism_pdk::FnResult<()> {
+            let (event, session) = input.0;
+            let ctx = $crate::PluginCtx::from_session(session);
+            <$plugin as $crate::EventSubscriber>::on_event(event, &ctx)
+                .map_err(|e| ::extism_pdk::Error::msg(e.to_string()))
+        }
+    };
+}
+
+/// Generate a WASM `on_interaction` export for an [`InteractionHandler`] implementation.
+///
+/// The host calls this export with `(HandlerId, serde_json::Value, SessionCtx)`.
+///
+/// # Example
+/// ```ignore
+/// interactions_export!(MyPlugin);
+/// ```
+#[macro_export]
+macro_rules! interactions_export {
+    ($plugin:ty) => {
+        #[::extism_pdk::plugin_fn]
+        pub fn on_interaction(
+            input: ::extism_pdk::Json<($crate::HandlerId, ::serde_json::Value, $crate::SessionCtx)>,
+        ) -> ::extism_pdk::FnResult<::extism_pdk::Json<$crate::ViewUpdate>> {
+            let (handler_id, event_data, session) = input.0;
+            let ctx = $crate::PluginCtx::from_session(session);
+            let result = <$plugin as $crate::InteractionHandler>::on_interaction(
+                handler_id,
+                event_data,
+                &ctx,
+            )
+            .map_err(|e| ::extism_pdk::Error::msg(e.to_string()))?;
+            Ok(::extism_pdk::Json(result))
+        }
+    };
+}
+
+/// Generate a WASM `on_load` export for an [`OnLoad`] implementation.
+///
+/// The host calls this once per pool initialisation. If it returns an error,
+/// the plugin fails to load.
+///
+/// # Example
+/// ```ignore
+/// on_load_export!(MyPlugin);
+/// ```
+#[macro_export]
+macro_rules! on_load_export {
+    ($plugin:ty) => {
+        #[::extism_pdk::plugin_fn]
+        pub fn on_load(
+            input: ::extism_pdk::Json<$crate::SessionCtx>,
+        ) -> ::extism_pdk::FnResult<()> {
+            let ctx = $crate::PluginCtx::from_session(input.0);
+            <$plugin as $crate::OnLoad>::on_load(&ctx)
+                .map_err(|e| ::extism_pdk::Error::msg(e.to_string()))
+        }
+    };
+}
+
+/// Generate a WASM `on_unload` export for an [`OnUnload`] implementation.
+///
+/// The host calls this before dropping the instance pool.
+///
+/// # Example
+/// ```ignore
+/// on_unload_export!(MyPlugin);
+/// ```
+#[macro_export]
+macro_rules! on_unload_export {
+    ($plugin:ty) => {
+        #[::extism_pdk::plugin_fn]
+        pub fn on_unload() -> ::extism_pdk::FnResult<()> {
+            <$plugin as $crate::OnUnload>::on_unload()
+                .map_err(|e| ::extism_pdk::Error::msg(e.to_string()))
         }
     };
 }

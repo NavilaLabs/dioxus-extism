@@ -19,6 +19,7 @@ members = [
     "examples/showcase/plugin-comments",
     "examples/showcase/plugin-stats",
     "examples/showcase/host",
+    "examples/ssr-example",
 ]
 resolver = "2"
 

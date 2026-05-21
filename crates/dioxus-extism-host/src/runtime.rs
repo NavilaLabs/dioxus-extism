@@ -365,7 +365,7 @@ pub struct PluginRuntime {
     pub(crate) persistence: Option<Arc<dyn StatePersistenceProvider>>,
     /// URL prefix under which plugin page routes are served (set at build time).
     pub(crate) plugin_page_prefix: Option<String>,
-    /// Sender half of the event dispatch channel; plugins call dx_emit_event → send here.
+    /// Sender half of the event dispatch channel; plugins call `dx_emit_event` → send here.
     pub(crate) event_tx: mpsc::UnboundedSender<(PluginEvent, SessionCtx)>,
 }
 
@@ -1304,6 +1304,7 @@ impl PluginRuntime {
             && plugin.manifest.min_app_version <= client.app_version
     }
 
+    #[allow(clippy::too_many_lines)]
     pub(crate) fn build_registries(
         plugins: &IndexMap<PluginId, LoadedPlugin>,
         page_prefix: Option<&str>,
@@ -1451,7 +1452,7 @@ impl PluginRuntime {
                 required_protocol_version,
                 required_app_version,
                 plugin_requirements,
-                page_route_prefix: page_prefix.map(|s| s.to_owned()),
+                page_route_prefix: page_prefix.map(ToOwned::to_owned),
             },
             api_routes: ApiRegistry(api_route_map),
             page_routes: PageRouteRegistry(page_route_list),
@@ -2096,6 +2097,7 @@ impl PluginRuntime {
     /// API route closures capture pool clones at startup time. Plugin hot-reload rebuilds
     /// the internal `ApiRegistry` but cannot update the already-running Axum router.
     /// API routes are therefore static for the lifetime of the server process.
+    #[allow(clippy::too_many_lines)]
     pub async fn api_router<S>(&self) -> axum::Router<S>
     where
         S: Clone + Send + Sync + 'static,
