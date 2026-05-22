@@ -47,7 +47,7 @@ pub use dioxus_extism_protocol::{
     PageRouteDeclaration, PageRouteInput, PageRouteOutput,
     AttrValue, BoundEventHandler, ClientCapabilities, DomEvent, HandlerId, HookCall, HookRegistration, HookResult,
     HostCapability, HostComponentRef, NodeSelector, PluginEvent, PluginId, PluginManifest,
-    PluginView, PriorityHint, RoutePattern, Selector, SessionCtx, SessionId, SlotContent,
+    PluginView, PriorityHint, PROTOCOL_VERSION, RoutePattern, Selector, SessionCtx, SessionId, SlotContent,
     SlotRegistration, StateScope, TransformDeclaration, TransformInput, TransformOp,
     TransformOutput, ViewElement, ViewUpdate,
 };
@@ -66,7 +66,7 @@ pub mod prelude {
         AttrValue, BoundEventHandler, ClientCapabilities, DioxusPlugin, DomEvent, EventSubscriber,
         HandlerId, HookCall, HookHandler, HookRegistration, HookResult, HostCapability, HostComponentRef,
         InteractionHandler, NodeSelector, OnLoad, OnUnload, PdkError, PluginCtx, PluginEvent,
-        PluginId, PluginManifest, PluginView, PriorityHint, RoutePattern, Selector, SessionCtx,
+        PluginId, PluginManifest, PluginView, PriorityHint, PROTOCOL_VERSION, RoutePattern, Selector, SessionCtx,
         SessionId, SlotContent, SlotRegistration, SlotProvider, StateScope, TransformDeclaration,
         TransformInput, TransformOp, TransformOutput, TransformProvider, ViewElement, ViewUpdate,
         a, button, div, element, form, fragment, h1, h2, h3, host, img, incompatible,
@@ -415,8 +415,8 @@ macro_rules! on_load_export {
             input: ::extism_pdk::Json<$crate::SessionCtx>,
         ) -> ::extism_pdk::FnResult<()> {
             let ctx = $crate::PluginCtx::from_session(input.0);
-            <$plugin as $crate::OnLoad>::on_load(&ctx)
-                .map_err(|e| ::extism_pdk::Error::msg(e.to_string()))
+            Ok(<$plugin as $crate::OnLoad>::on_load(&ctx)
+                .map_err(|e| ::extism_pdk::Error::msg(e.to_string()))?)
         }
     };
 }
@@ -434,8 +434,8 @@ macro_rules! on_unload_export {
     ($plugin:ty) => {
         #[::extism_pdk::plugin_fn]
         pub fn on_unload() -> ::extism_pdk::FnResult<()> {
-            <$plugin as $crate::OnUnload>::on_unload()
-                .map_err(|e| ::extism_pdk::Error::msg(e.to_string()))
+            Ok(<$plugin as $crate::OnUnload>::on_unload()
+                .map_err(|e| ::extism_pdk::Error::msg(e.to_string()))?)
         }
     };
 }

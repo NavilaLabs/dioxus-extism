@@ -70,3 +70,29 @@ fn all_component_names_returns_registered() {
     assert!(names.contains("Hero"));
     assert!(names.contains("Sidebar"));
 }
+
+#[test]
+fn for_route_two_overlapping_patterns_both_returned_priority_sorted() {
+    let mut reg = TransformRegistry::default();
+    reg.insert_route(RoutePattern("/products/:id".into()), entry("p1", 750, TransformOp::Wrap));
+    reg.insert_route(
+        RoutePattern("/:category/:id".into()),
+        entry("p2", 500, TransformOp::InjectAfter),
+    );
+    let entries = reg.for_route("/products/42");
+    assert_eq!(entries.len(), 2);
+    assert!(entries[0].priority >= entries[1].priority);
+}
+
+#[test]
+fn insert_within_round_trip_isolation() {
+    use dioxus_extism_protocol::{NodeSelector, Selector};
+
+    let mut reg = TransformRegistry::default();
+    let node_sel = NodeSelector::HasClass("target".into());
+    let e = entry("p", 500, TransformOp::WrapNode);
+    reg.insert_within(Selector::Slot("sidebar".into()), node_sel, e);
+
+    assert_eq!(reg.within_for_outer(&Selector::Slot("sidebar".into())).len(), 1);
+    assert!(reg.within_for_outer(&Selector::Slot("header".into())).is_empty());
+}

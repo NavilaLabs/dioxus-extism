@@ -22,6 +22,8 @@ futures                = { workspace = true }
 [dev-dependencies]
 tokio      = { workspace = true }
 serde_json = { workspace = true }
+tempfile   = "3"
+futures    = { workspace = true }
 
 [lints]
 workspace = true

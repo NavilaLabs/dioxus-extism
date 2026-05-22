@@ -1155,6 +1155,7 @@ dependencies = [
  "serde",
  "serde_json",
  "sha2",
+ "tempfile",
  "thiserror 2.0.18",
  "tokio",
  "tracing",
@@ -1877,6 +1878,202 @@ name = "fixedbitset"
 version = "0.4.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "0ce7134b9999ecaf8bcd65542e436736ef32ddca1b3e06094cb6ec5755203b80"
+
+[[package]]
+name = "fixture-blocking-slot"
+version = "0.1.0"
+dependencies = [
+ "dioxus-extism-pdk",
+ "extism-pdk",
+]
+
+[[package]]
+name = "fixture-cap-global-write-denied"
+version = "0.1.0"
+dependencies = [
+ "dioxus-extism-pdk",
+ "extism-pdk",
+ "serde_json",
+]
+
+[[package]]
+name = "fixture-cap-invoke-a"
+version = "0.1.0"
+dependencies = [
+ "dioxus-extism-pdk",
+ "extism-pdk",
+ "serde_json",
+]
+
+[[package]]
+name = "fixture-cap-invoke-b"
+version = "0.1.0"
+dependencies = [
+ "dioxus-extism-pdk",
+ "extism-pdk",
+ "serde_json",
+]
+
+[[package]]
+name = "fixture-cap-invoke-denied"
+version = "0.1.0"
+dependencies = [
+ "dioxus-extism-pdk",
+ "extism-pdk",
+ "serde_json",
+]
+
+[[package]]
+name = "fixture-cap-plugin-state-read"
+version = "0.1.0"
+dependencies = [
+ "dioxus-extism-pdk",
+ "extism-pdk",
+ "serde_json",
+]
+
+[[package]]
+name = "fixture-cap-state-owner"
+version = "0.1.0"
+dependencies = [
+ "dioxus-extism-pdk",
+ "extism-pdk",
+ "serde_json",
+]
+
+[[package]]
+name = "fixture-failing-on-load"
+version = "0.1.0"
+dependencies = [
+ "dioxus-extism-pdk",
+ "extism-pdk",
+]
+
+[[package]]
+name = "fixture-high-app-version"
+version = "0.1.0"
+dependencies = [
+ "dioxus-extism-pdk",
+ "extism-pdk",
+ "serde_json",
+]
+
+[[package]]
+name = "fixture-high-protocol-version"
+version = "0.1.0"
+dependencies = [
+ "dioxus-extism-pdk",
+ "extism-pdk",
+]
+
+[[package]]
+name = "fixture-hook-after-cancel"
+version = "0.1.0"
+dependencies = [
+ "dioxus-extism-pdk",
+ "extism-pdk",
+ "serde_json",
+]
+
+[[package]]
+name = "fixture-hook-cancel"
+version = "0.1.0"
+dependencies = [
+ "dioxus-extism-pdk",
+ "extism-pdk",
+]
+
+[[package]]
+name = "fixture-hook-continue"
+version = "0.1.0"
+dependencies = [
+ "dioxus-extism-pdk",
+ "extism-pdk",
+ "serde_json",
+]
+
+[[package]]
+name = "fixture-hook-erroring"
+version = "0.1.0"
+dependencies = [
+ "dioxus-extism-pdk",
+ "extism-pdk",
+]
+
+[[package]]
+name = "fixture-hook-replace"
+version = "0.1.0"
+dependencies = [
+ "dioxus-extism-pdk",
+ "extism-pdk",
+ "serde_json",
+]
+
+[[package]]
+name = "fixture-slot-failing"
+version = "0.1.0"
+dependencies = [
+ "dioxus-extism-pdk",
+ "extism-pdk",
+]
+
+[[package]]
+name = "fixture-slot-high"
+version = "0.1.0"
+dependencies = [
+ "dioxus-extism-pdk",
+ "extism-pdk",
+]
+
+[[package]]
+name = "fixture-slot-normal"
+version = "0.1.0"
+dependencies = [
+ "dioxus-extism-pdk",
+ "extism-pdk",
+ "serde_json",
+]
+
+[[package]]
+name = "fixture-within-selector"
+version = "0.1.0"
+dependencies = [
+ "dioxus-extism-pdk",
+ "extism-pdk",
+]
+
+[[package]]
+name = "fixture-wrap-a"
+version = "0.1.0"
+dependencies = [
+ "dioxus-extism-pdk",
+ "extism-pdk",
+ "serde_json",
+]
+
+[[package]]
+name = "fixture-wrap-b"
+version = "0.1.0"
+dependencies = [
+ "dioxus-extism-pdk",
+ "extism-pdk",
+]
+
+[[package]]
+name = "fixture-wrap-failing"
+version = "0.1.0"
+dependencies = [
+ "dioxus-extism-pdk",
+ "extism-pdk",
+]
+
+[[package]]
+name = "fixture-wrap-no-content"
+version = "0.1.0"
+dependencies = [
+ "dioxus-extism-pdk",
+ "extism-pdk",
+]
 
 [[package]]
 name = "flate2"

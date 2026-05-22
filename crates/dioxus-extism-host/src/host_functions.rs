@@ -57,6 +57,8 @@ pub struct CallCtx {
     /// Hostnames (without scheme/path/port) the plugin is allowed to contact.
     /// An empty list means Http capability was not requested.
     pub granted_http_hosts: Vec<String>,
+    /// Cross-plugin state reads granted: maps target plugin id → allowed key set.
+    pub granted_plugin_state_reads: HashMap<PluginId, HashSet<String>>,
     /// Sender half of the shared event bus; plugin calls `dx_emit_event` → sends here.
     pub event_tx: tokio::sync::mpsc::UnboundedSender<(PluginEvent, SessionCtx)>,
 }
@@ -268,7 +270,7 @@ fn make_global_state_get(user_data: extism::UserData<CallCtx>) -> extism::Functi
                     ctx.granted_global_read.clone(),
                 )
             };
-            if !granted.is_empty() && !granted.contains(&key) {
+            if !granted.contains(&key) {
                 return Err(anyhow::anyhow!(
                     "capability denied: GlobalStateRead({key}) not granted to {caller:?}"
                 ));
@@ -312,7 +314,7 @@ fn make_global_state_set(user_data: extism::UserData<CallCtx>) -> extism::Functi
                     ctx.persistence.clone(),
                 )
             };
-            if !granted.is_empty() && !granted.contains(&key) {
+            if !granted.contains(&key) {
                 return Err(anyhow::anyhow!(
                     "capability denied: GlobalStateWrite({key}) not granted to {caller:?}"
                 ));
@@ -354,11 +356,18 @@ fn make_plugin_state_get(user_data: extism::UserData<CallCtx>) -> extism::Functi
             let target_id: String = plugin.memory_get_val(&inputs[0])?;
             let key: String = plugin.memory_get_val(&inputs[1])?;
             let arc = extract_ctx(&user_data)?;
-            let global_states = {
+            let (global_states, granted_reads) = {
                 let ctx = arc.lock().map_err(|_| anyhow::anyhow!("CallCtx mutex poisoned"))?;
-                ctx.global_states.clone()
+                (ctx.global_states.clone(), ctx.granted_plugin_state_reads.clone())
             };
             let target = PluginId(target_id);
+            // Deny if ReadPluginState capability was not declared for this target+key.
+            let allowed = granted_reads
+                .get(&target)
+                .is_some_and(|keys| keys.contains(&key));
+            if !allowed {
+                return write_json_output(plugin, outputs, &Option::<serde_json::Value>::None);
+            }
             let handle = tokio::runtime::Handle::current();
             let value = handle.block_on(async {
                 let states = global_states.read().await;

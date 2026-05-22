@@ -50,7 +50,7 @@ pub enum PluginSource {
 // ── Install config ────────────────────────────────────────────────────────────
 
 /// Per-plugin installer configuration.
-#[derive(Debug, Default)]
+#[derive(Debug, Default, Clone)]
 pub struct PluginInstallConfig {
     pub base_priority: Option<i32>,
     pub overrides: HashMap<String, i32>,
@@ -446,6 +446,18 @@ impl PluginRuntime {
             .cloned()
     }
 
+    /// Read one key from a plugin's global (cross-session) state.
+    ///
+    /// Returns `None` if the plugin or key does not exist in the global state map.
+    pub async fn global_state_json(
+        &self,
+        plugin_id: &PluginId,
+        key: &str,
+    ) -> Option<serde_json::Value> {
+        let states = self.global_states.read().await;
+        states.get(plugin_id).and_then(|p| p.get(key)).cloned()
+    }
+
     /// Write a key into a plugin's per-session state.
     ///
     /// Creates the session entry if it does not exist yet.
@@ -479,10 +491,10 @@ impl PluginRuntime {
     ///
     /// # Errors
     /// Returns `PluginRuntimeError::PluginNotFound` if the plugin is not registered.
-    #[allow(clippy::significant_drop_tightening)]
-    pub fn enable_plugin(&self, id: &PluginId) -> Result<(), PluginRuntimeError> {
-        let plugins = self.plugins.blocking_read();
-        plugins
+    pub async fn enable_plugin(&self, id: &PluginId) -> Result<(), PluginRuntimeError> {
+        self.plugins
+            .read()
+            .await
             .get(id)
             .ok_or_else(|| PluginRuntimeError::PluginNotFound(id.clone()))?
             .enabled
@@ -497,10 +509,10 @@ impl PluginRuntime {
     ///
     /// # Errors
     /// Returns `PluginRuntimeError::PluginNotFound` if the plugin is not registered.
-    #[allow(clippy::significant_drop_tightening)]
-    pub fn disable_plugin(&self, id: &PluginId) -> Result<(), PluginRuntimeError> {
-        let plugins = self.plugins.blocking_read();
-        plugins
+    pub async fn disable_plugin(&self, id: &PluginId) -> Result<(), PluginRuntimeError> {
+        self.plugins
+            .read()
+            .await
             .get(id)
             .ok_or_else(|| PluginRuntimeError::PluginNotFound(id.clone()))?
             .enabled
@@ -538,18 +550,24 @@ impl PluginRuntime {
                 let plugins = self.plugins.read().await;
                 match plugins.get(&plugin_id) {
                     Some(p) => {
-                        let min_prot = p.manifest.min_protocol_version;
-                        if min_prot > session.client.protocol_version {
+                        if !Self::is_compatible(p, &session.client) {
+                            let reason = if p.manifest.min_protocol_version > session.client.protocol_version {
+                                format!(
+                                    "plugin requires protocol {}, client has {}",
+                                    p.manifest.min_protocol_version,
+                                    session.client.protocol_version
+                                )
+                            } else {
+                                format!(
+                                    "plugin requires app version {}, client has {}",
+                                    p.manifest.min_app_version,
+                                    session.client.app_version
+                                )
+                            };
                             results.push(SlotContent {
                                 plugin_id: plugin_id.clone(),
                                 priority,
-                                view: PluginView::Incompatible {
-                                    reason: format!(
-                                        "plugin requires protocol {min_prot}, client has {}",
-                                        session.client.protocol_version
-                                    ),
-                                    fallback: None,
-                                },
+                                view: PluginView::Incompatible { reason, fallback: None },
                             });
                             continue;
                         }
@@ -662,7 +680,7 @@ impl PluginRuntime {
                 context: current.clone(),
             };
 
-            let export = format!("hook_{hook_name}");
+            let export = format!("hook_{}", hook_name.replace('-', "_"));
             match call_export::<(HookCall, SessionCtx), HookResult>(
                 pool,
                 export,
@@ -1121,6 +1139,7 @@ impl PluginRuntime {
         let mut granted_global_read = HashSet::new();
         let mut granted_global_write = HashSet::new();
         let mut granted_http_hosts: Vec<String> = Vec::new();
+        let mut granted_plugin_state_reads: HashMap<PluginId, HashSet<String>> = HashMap::new();
         for cap in &new_manifest.host_capabilities {
             match cap {
                 HostCapability::Invoke { names } => {
@@ -1137,6 +1156,12 @@ impl PluginRuntime {
                 HostCapability::Http { allowed_hosts } => {
                     granted_http_hosts.extend(allowed_hosts.iter().cloned());
                 }
+                HostCapability::ReadPluginState { plugin_id, keys } => {
+                    granted_plugin_state_reads
+                        .entry(plugin_id.clone())
+                        .or_default()
+                        .extend(keys.iter().cloned());
+                }
                 _ => {}
             }
         }
@@ -1152,6 +1177,7 @@ impl PluginRuntime {
             granted_global_read,
             granted_global_write,
             granted_http_hosts,
+            granted_plugin_state_reads,
             event_tx: self.event_tx.clone(),
         };
         let user_data = extism::UserData::new(new_ctx);
@@ -1874,6 +1900,7 @@ impl PluginRuntimeBuilder {
             let mut granted_global_read = HashSet::new();
             let mut granted_global_write = HashSet::new();
             let mut granted_http_hosts: Vec<String> = Vec::new();
+            let mut granted_plugin_state_reads: HashMap<PluginId, HashSet<String>> = HashMap::new();
 
             for cap in &plugin_manifest.host_capabilities {
                 match cap {
@@ -1897,6 +1924,12 @@ impl PluginRuntimeBuilder {
                     HostCapability::Http { allowed_hosts } => {
                         granted_http_hosts.extend(allowed_hosts.iter().cloned());
                     }
+                    HostCapability::ReadPluginState { plugin_id, keys } => {
+                        granted_plugin_state_reads
+                            .entry(plugin_id.clone())
+                            .or_default()
+                            .extend(keys.iter().cloned());
+                    }
                     _ => {}
                 }
             }
@@ -1912,6 +1945,7 @@ impl PluginRuntimeBuilder {
                 granted_global_read,
                 granted_global_write,
                 granted_http_hosts,
+                granted_plugin_state_reads,
                 event_tx: event_tx.clone(),
             };
             let user_data = extism::UserData::new(ctx);
@@ -2292,5 +2326,125 @@ pub trait PluginRuntimeExt {
 impl PluginRuntimeExt for axum::Router {
     fn with_plugin_runtime(self, runtime: Arc<PluginRuntime>) -> Self {
         self.layer(axum::Extension(runtime))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+    use std::time::Duration;
+
+    #[tokio::test]
+    async fn invocation_registry_timeout_fires_within_wall_time() {
+        let mut registry = InvocationRegistry::new();
+        let timeout = Duration::from_millis(50);
+        registry.handlers.insert(
+            "slow".into(),
+            (
+                Arc::new(|_args, _session| {
+                    Box::pin(async {
+                        tokio::time::sleep(Duration::from_secs(10)).await;
+                        Ok(json!({}))
+                    })
+                }),
+                timeout,
+            ),
+        );
+
+        let session = SessionCtx {
+            session_id: SessionId("test".into()),
+            user_id: None,
+            client: ClientCapabilities::default(),
+            caller: None,
+        };
+
+        let start = std::time::Instant::now();
+        let result = registry.call("slow", json!({}), session).await;
+        assert!(
+            start.elapsed() < Duration::from_secs(1),
+            "call took {:?}, expected < 1s",
+            start.elapsed()
+        );
+        assert!(
+            matches!(result, Err(InvocationError::Timeout(_))),
+            "expected Timeout, got {result:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn session_ttl_within_ttl_not_evicted() {
+        let ttl = Duration::from_millis(200);
+        let runtime = PluginRuntimeBuilder::new()
+            .with_session_ttl(ttl)
+            .build()
+            .await
+            .expect("runtime build");
+
+        let plugin_id = PluginId("test/p".into());
+        let session_id = SessionId("s1".into());
+        runtime.set_plugin_state(&plugin_id, &session_id, "key", json!("value")).await;
+
+        // Backdate last_access to TTL/2 ago — still within TTL.
+        runtime.session_last_access.write().await.insert(
+            session_id.clone(),
+            std::time::Instant::now() - ttl / 2,
+        );
+
+        // Run eviction logic inline.
+        let cutoff = std::time::Instant::now().checked_sub(ttl).expect("sub");
+        let expired: Vec<SessionId> = {
+            let access = runtime.session_last_access.read().await;
+            access
+                .iter()
+                .filter(|&(_, &last)| last < cutoff)
+                .map(|(id, _)| id.clone())
+                .collect()
+        };
+        for id in &expired {
+            runtime.session_states.write().await.remove(id);
+            runtime.session_last_access.write().await.remove(id);
+        }
+
+        let val = runtime.get_plugin_state(&plugin_id, "key", &session_id).await;
+        assert!(val.is_some(), "session state evicted too early");
+    }
+
+    #[tokio::test]
+    async fn session_ttl_beyond_ttl_is_evicted() {
+        let ttl = Duration::from_millis(200);
+        let runtime = PluginRuntimeBuilder::new()
+            .with_session_ttl(ttl)
+            .build()
+            .await
+            .expect("runtime build");
+
+        let plugin_id = PluginId("test/p".into());
+        let session_id = SessionId("s2".into());
+        runtime.set_plugin_state(&plugin_id, &session_id, "key", json!("value")).await;
+
+        // Backdate last_access to TTL + 1 second ago — clearly expired.
+        runtime.session_last_access.write().await.insert(
+            session_id.clone(),
+            std::time::Instant::now() - ttl - Duration::from_secs(1),
+        );
+
+        // Run eviction logic inline.
+        let cutoff = std::time::Instant::now().checked_sub(ttl).expect("sub");
+        let expired: Vec<SessionId> = {
+            let access = runtime.session_last_access.read().await;
+            access
+                .iter()
+                .filter(|&(_, &last)| last < cutoff)
+                .map(|(id, _)| id.clone())
+                .collect()
+        };
+        for id in &expired {
+            runtime.session_states.write().await.remove(id);
+            runtime.session_last_access.write().await.remove(id);
+        }
+
+        let val = runtime.get_plugin_state(&plugin_id, "key", &session_id).await;
+        assert!(val.is_none(), "session state should have been evicted after TTL");
     }
 }

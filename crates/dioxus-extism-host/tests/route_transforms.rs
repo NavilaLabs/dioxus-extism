@@ -1,5 +1,8 @@
-use dioxus_extism_host::PluginRuntimeBuilder;
-use dioxus_extism_protocol::{ClientCapabilities, SessionCtx, SessionId, PROTOCOL_VERSION};
+use dioxus_extism_host::{HookOutcome, PluginRuntimeBuilder};
+use dioxus_extism_protocol::{
+    ClientCapabilities, PluginView, Selector, SessionCtx, SessionId, TransformContext,
+    PROTOCOL_VERSION,
+};
 
 fn test_session() -> SessionCtx {
     SessionCtx {
@@ -34,6 +37,37 @@ async fn unmatched_path_returns_empty_transforms() {
     assert!(!result.has_wrap());
     assert!(result.before.is_empty());
     assert!(result.after.is_empty());
+}
+
+#[tokio::test]
+async fn run_hook_no_handlers_returns_passed_with_original_context() {
+    let runtime = PluginRuntimeBuilder::new().build().await.expect("runtime build");
+    let ctx = serde_json::json!({"value": 42});
+    let outcome = runtime
+        .run_hook("unregistered-hook", ctx.clone(), &test_session())
+        .await
+        .expect("run_hook failed");
+    assert!(
+        matches!(&outcome, HookOutcome::Passed(c) if *c == ctx),
+        "expected Passed with original context, got {outcome:?}"
+    );
+}
+
+#[tokio::test]
+async fn apply_tree_transforms_no_within_returns_view_unchanged() {
+    let runtime = PluginRuntimeBuilder::new().build().await.expect("runtime build");
+    let original_view = PluginView::Text("unchanged".into());
+    let context = TransformContext::default();
+    let result = runtime
+        .apply_tree_transforms(
+            &Selector::Slot("test-slot".into()),
+            original_view.clone(),
+            context,
+            &test_session(),
+        )
+        .await
+        .expect("apply_tree_transforms failed");
+    assert_eq!(result, original_view);
 }
 
 /// Integration tests requiring compiled WASM fixtures are marked #[ignore].
