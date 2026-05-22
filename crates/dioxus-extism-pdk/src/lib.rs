@@ -53,9 +53,11 @@ pub use dioxus_extism_protocol::{
 };
 pub use error::PdkError;
 pub use view::{
-    a, button, div, element, form, fragment, h1, h2, h3, host, img, incompatible,
-    incompatible_with_fallback, input, label, li, ol, original_content, original_target,
-    p, span, text, ul, HostComponentBuilder, ViewBuilder,
+    a, article, aside, button, div, element, footer, form, fragment,
+    h1, h2, h3, h4, h5, h6, header, host, img, incompatible,
+    incompatible_with_fallback, input, label, li, nav, ol, option, original_content,
+    original_target, p, section, select, span, table, tbody, td, text, textarea,
+    th, thead, tr, ul, HostComponentBuilder, ViewBuilder,
 };
 
 /// Prelude for plugin authors — import everything with one `use`.
@@ -69,9 +71,11 @@ pub mod prelude {
         PluginId, PluginManifest, PluginView, PriorityHint, PROTOCOL_VERSION, RoutePattern, Selector, SessionCtx,
         SessionId, SlotContent, SlotRegistration, SlotProvider, StateScope, TransformDeclaration,
         TransformInput, TransformOp, TransformOutput, TransformProvider, ViewElement, ViewUpdate,
-        a, button, div, element, form, fragment, h1, h2, h3, host, img, incompatible,
-        incompatible_with_fallback, input, label, li, ol, original_content, original_target,
-        p, span, text, ul, HostComponentBuilder, ViewBuilder,
+        a, article, aside, button, div, element, footer, form, fragment,
+        h1, h2, h3, h4, h5, h6, header, host, img, incompatible,
+        incompatible_with_fallback, input, label, li, nav, ol, option, original_content,
+        original_target, p, section, select, span, table, tbody, td, text, textarea,
+        th, thead, tr, ul, HostComponentBuilder, ViewBuilder,
     };
 }
 

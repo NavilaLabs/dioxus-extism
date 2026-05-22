@@ -1,0 +1,10 @@
+[application]
+out_dir = "dist"
+asset_dir = "public"
+
+[web.app]
+title = "dioxus-extism Showcase"
+
+[web.watcher]
+index_on_404 = true
+watch_path = ["src"]
