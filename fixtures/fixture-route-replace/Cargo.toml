@@ -1,0 +1,15 @@
+[package]
+name = "fixture-route-replace"
+version = "0.1.0"
+edition = "2024"
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+dioxus-extism-pdk = { path = "../../crates/dioxus-extism-pdk" }
+extism-pdk        = { workspace = true }
+serde_json        = { workspace = true }
+
+[lints]
+workspace = true

@@ -43,6 +43,9 @@ members = [
     "fixtures/fixture-cap-invoke-a",
     "fixtures/fixture-cap-invoke-b",
     "fixtures/fixture-blocking-slot",
+    "fixtures/fixture-with-extension",
+    "fixtures/fixture-echo-fn",
+    "fixtures/fixture-route-replace",
 ]
 resolver = "2"
 
@@ -73,6 +76,7 @@ keyring       = "3"
 fd-lock       = "4"
 trybuild      = "1"
 async-stream  = "0.3"
+criterion     = { version = "0.5", features = ["async_tokio"] }
 
 [workspace.lints.clippy]
 all         = { level = "deny" }
