@@ -314,6 +314,13 @@ pub enum TransformOp {
     /// `HostComponent("__content__")` as a placeholder for the original.
     /// Multiple Wrap plugins form a sequential pipeline (see §1.5).
     Wrap,
+    /// Fully replace a matched host route's content with the plugin view.
+    ///
+    /// Only the highest-priority plugin's replacement is rendered; `Wrap` and
+    /// `Inject` transforms from other plugins still apply around it. If the host
+    /// has a `route_replace_policy` registered, it must approve the plugin before
+    /// the replacement is honoured.
+    RouteReplace,
 
     // ── Node level (Layer 3) ──────────────────────────────────────────────────
     /// Replace the selected node entirely with the plugin view.
@@ -550,6 +557,10 @@ pub struct SsrRouteTransforms {
     pub before: Vec<PluginView>,
     pub wrap: Option<PluginView>,
     pub after: Vec<PluginView>,
+    /// When `Some`, replaces the host route's content entirely. `Wrap` and `Inject`
+    /// transforms from other plugins still apply around it.
+    #[serde(default)]
+    pub replacement: Option<PluginView>,
 }
 
 /// Resolved transforms for one named component at render time.
@@ -575,6 +586,10 @@ pub struct RouteTransforms {
     pub before: Vec<PluginView>,
     pub wrap: Option<PluginView>,
     pub after: Vec<PluginView>,
+    /// When `Some`, replaces the host route's content entirely. `Wrap` and `Inject`
+    /// transforms from other plugins still apply around it.
+    #[serde(default)]
+    pub replacement: Option<PluginView>,
 }
 
 impl RouteTransforms {
@@ -584,16 +599,25 @@ impl RouteTransforms {
         Self::default()
     }
 
-    /// Returns `true` if all three partitions are empty.
+    /// Returns `true` if all partitions are empty.
     #[must_use]
-    pub const fn is_empty(&self) -> bool {
-        self.before.is_empty() && self.wrap.is_none() && self.after.is_empty()
+    pub fn is_empty(&self) -> bool {
+        self.before.is_empty()
+            && self.wrap.is_none()
+            && self.after.is_empty()
+            && self.replacement.is_none()
     }
 
     /// Returns `true` if a Wrap transform was resolved for this path.
     #[must_use]
     pub const fn has_wrap(&self) -> bool {
         self.wrap.is_some()
+    }
+
+    /// Returns `true` if a RouteReplace transform was resolved for this path.
+    #[must_use]
+    pub const fn has_replacement(&self) -> bool {
+        self.replacement.is_some()
     }
 }
 

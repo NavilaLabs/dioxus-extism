@@ -293,6 +293,12 @@ fn PluginAwareRouterInner(path: String, outlet: Element) -> Element {
             let before = t.before.clone();
             let wrap = t.wrap.clone().expect("has_wrap is true");
             let after = t.after.clone();
+            // When a replacement is present it takes the place of the host outlet inside the wrap.
+            let content_slot = if let Some(repl) = t.replacement.clone() {
+                rsx! { PluginViewRenderer { view: repl, session_id } }
+            } else {
+                outlet
+            };
             rsx! {
                 for (i, view) in before.into_iter().enumerate() {
                     PluginViewRenderer { key: "{i}-b", view, session_id }
@@ -300,8 +306,22 @@ fn PluginAwareRouterInner(path: String, outlet: Element) -> Element {
                 PluginViewRenderer {
                     view: wrap,
                     session_id,
-                    content_slot: outlet,
+                    content_slot,
                 }
+                for (i, view) in after.into_iter().enumerate() {
+                    PluginViewRenderer { key: "{i}-a", view, session_id }
+                }
+            }
+        }
+        Some(Ok(t)) if t.has_replacement() => {
+            let before = t.before.clone();
+            let repl = t.replacement.clone().expect("has_replacement is true");
+            let after = t.after.clone();
+            rsx! {
+                for (i, view) in before.into_iter().enumerate() {
+                    PluginViewRenderer { key: "{i}-b", view, session_id }
+                }
+                PluginViewRenderer { view: repl, session_id }
                 for (i, view) in after.into_iter().enumerate() {
                     PluginViewRenderer { key: "{i}-a", view, session_id }
                 }

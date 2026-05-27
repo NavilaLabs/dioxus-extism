@@ -14,6 +14,6 @@ pub use manifest_extension::{ManifestExtensionError, ManifestExtensionHandler, O
 pub use persistence::JsonFilePersistence;
 pub use runtime::{
     CapabilityCheckFn, GlobalStateMap, HookOutcome, PluginInstallConfig, PluginRuntime,
-    PluginRuntimeBuilder, PluginRuntimeExt, PluginSource, SessionStateMap,
+    PluginRuntimeBuilder, PluginRuntimeExt, PluginSource, RouteReplacePolicyFn, SessionStateMap,
     StatePersistenceProvider, TransformEntry, TransformRegistry,
 };

@@ -25,6 +25,20 @@ use crate::error::{InvocationError, PersistenceError, PluginRuntimeError};
 use crate::host_functions::{self, CallCtx, make_host_functions};
 use crate::manifest_extension::{ManifestExtensionHandler, OnUnknownExtension};
 
+// ── Route replace policy type ─────────────────────────────────────────────────
+
+/// A host-provided policy callback that controls whether a plugin's `RouteReplace`
+/// transform is honoured for a given route pattern.
+///
+/// Receives the declaring plugin's [`PluginId`] and the route pattern string (e.g.
+/// `"/products/:id"`). Return `true` to allow the replacement, `false` to deny.
+///
+/// Default when no policy is registered: **allow**.
+///
+/// Register via [`PluginRuntimeBuilder::with_route_replace_policy`] or
+/// [`PluginRuntime::register_route_replace_policy`].
+pub type RouteReplacePolicyFn = dyn Fn(&PluginId, &str) -> bool + Send + Sync;
+
 // ── Capability check type ─────────────────────────────────────────────────────
 
 /// A host-provided check for a `HostCapability::Custom` namespace.
@@ -386,6 +400,8 @@ pub struct PluginRuntime {
     pub(crate) on_unknown_extension: OnUnknownExtension,
     /// Host-registered checks for `HostCapability::Custom` namespaces.
     pub(crate) capability_checks: RwLock<HashMap<String, Arc<CapabilityCheckFn>>>,
+    /// Optional host policy for `TransformOp::RouteReplace`. `None` means allow all.
+    pub(crate) route_replace_policy: RwLock<Option<Arc<RouteReplacePolicyFn>>>,
 }
 
 impl PluginRuntime {
@@ -403,6 +419,13 @@ impl PluginRuntime {
             .write()
             .await
             .insert(namespace.into(), handler);
+    }
+
+    /// Set the policy for `TransformOp::RouteReplace`. Replaces any previously set policy.
+    ///
+    /// For startup-time registration prefer [`PluginRuntimeBuilder::with_route_replace_policy`].
+    pub async fn register_route_replace_policy(&self, policy: Arc<RouteReplacePolicyFn>) {
+        *self.route_replace_policy.write().await = Some(policy);
     }
 
     /// Register a check for a `HostCapability::Custom` namespace.
@@ -492,6 +515,7 @@ impl PluginRuntime {
             before: rt.before,
             wrap: rt.wrap,
             after: rt.after,
+            replacement: rt.replacement,
         };
 
         // All registered slot names.
@@ -983,15 +1007,22 @@ impl PluginRuntime {
         let mut inject_before = vec![];
         let mut wrap_entries = vec![];
         let mut inject_after = vec![];
+        let mut replace_entries = vec![];
 
         for entry in all_entries {
             match entry.op {
                 TransformOp::InjectBefore => inject_before.push(entry),
                 TransformOp::Wrap => wrap_entries.push(entry),
                 TransformOp::InjectAfter => inject_after.push(entry),
+                TransformOp::RouteReplace => replace_entries.push(entry),
                 _ => {}
             }
         }
+
+        // Sort RouteReplace candidates: priority desc, then plugin_id asc for ties.
+        replace_entries.sort_by(|a, b| {
+            b.priority.cmp(&a.priority).then_with(|| a.plugin_id.0.cmp(&b.plugin_id.0))
+        });
 
         let before = self.run_inject_transforms(&inject_before, path, session).await;
 
@@ -1067,7 +1098,69 @@ impl PluginRuntime {
 
         let after = self.run_inject_transforms(&inject_after, path, session).await;
 
-        Ok(RouteTransforms { before, wrap, after })
+        // Resolve the highest-priority approved RouteReplace entry, if any.
+        let replacement = {
+            let policy = self.route_replace_policy.read().await;
+            let mut resolved = None;
+            'outer: for entry in &replace_entries {
+                // Apply host policy; allow by default.
+                if let Some(pol) = policy.as_deref() {
+                    let pattern = entry.route_pattern.as_deref().unwrap_or("");
+                    if !pol(&entry.plugin_id, pattern) {
+                        continue;
+                    }
+                }
+                let pool = {
+                    let plugins = self.plugins.read().await;
+                    match plugins.get(&entry.plugin_id) {
+                        Some(p)
+                            if p.enabled.load(Ordering::Relaxed)
+                                && Self::is_compatible(p, &session.client) =>
+                        {
+                            p.pool.clone()
+                        }
+                        _ => continue 'outer,
+                    }
+                };
+                let params = entry
+                    .route_pattern
+                    .as_deref()
+                    .and_then(|pat| RoutePattern(pat.into()).extract_params(path))
+                    .unwrap_or_default();
+                let input = TransformInput {
+                    original: None,
+                    context: TransformContext {
+                        route_params: params,
+                        client: session.client.clone(),
+                        ..Default::default()
+                    },
+                    session: session.clone(),
+                };
+                match call_export::<TransformInput, TransformOutput>(
+                    pool,
+                    entry.transform_fn.clone(),
+                    input,
+                    session.clone(),
+                )
+                .await
+                {
+                    Ok(out) => {
+                        resolved = Some(out.view);
+                        break;
+                    }
+                    Err(e) => {
+                        tracing::warn!(
+                            plugin = %entry.plugin_id.0,
+                            error = %e,
+                            "route replace transform failed, trying next candidate"
+                        );
+                    }
+                }
+            }
+            resolved
+        };
+
+        Ok(RouteTransforms { before, wrap, after, replacement })
     }
 
     async fn run_inject_transforms(
@@ -1997,6 +2090,7 @@ pub struct PluginRuntimeBuilder {
     extension_handlers: Vec<(String, Arc<dyn ManifestExtensionHandler>)>,
     on_unknown_extension: OnUnknownExtension,
     capability_checks: Vec<(String, Arc<CapabilityCheckFn>)>,
+    route_replace_policy: Option<Arc<RouteReplacePolicyFn>>,
 }
 
 impl PluginRuntimeBuilder {
@@ -2101,6 +2195,14 @@ impl PluginRuntimeBuilder {
         check: Arc<CapabilityCheckFn>,
     ) -> Self {
         self.capability_checks.push((namespace.into(), check));
+        self
+    }
+
+    /// Register a policy callback that controls whether `TransformOp::RouteReplace`
+    /// is honoured. Default when not set: **allow all**.
+    #[must_use]
+    pub fn with_route_replace_policy(mut self, policy: Arc<RouteReplacePolicyFn>) -> Self {
+        self.route_replace_policy = Some(policy);
         self
     }
 
@@ -2400,6 +2502,7 @@ impl PluginRuntimeBuilder {
             extension_handlers: RwLock::new(extension_handlers),
             on_unknown_extension,
             capability_checks: RwLock::new(capability_checks),
+            route_replace_policy: RwLock::new(self.route_replace_policy),
         });
 
         // Event dispatch task: receives plugin-emitted events and fans them out.
