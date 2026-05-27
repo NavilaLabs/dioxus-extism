@@ -41,7 +41,7 @@ dx serve
 
 **3. Open the browser**
 
-Navigate to [http://localhost:8080](http://localhost:8080).
+Navigate to [http://localhost:3010](http://localhost:3010).
 
 ## Expected output
 

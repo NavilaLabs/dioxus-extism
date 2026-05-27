@@ -11,9 +11,9 @@ services:
       - seccomp:unconfined
     ports:
       # Dioxus fullstack dev server (examples)
-      - "8080:8080"
+      - "3010:3010"
       # Dioxus hot-reload port
-      - "8081:8081"
+      - "3011:3011"
     networks:
       - local
     volumes:

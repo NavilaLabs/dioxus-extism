@@ -42,7 +42,7 @@ dx serve
 
 **3. Open the browser**
 
-Navigate to [http://localhost:8080](http://localhost:8080), then click any article
+Navigate to [http://localhost:3010](http://localhost:3010), then click any article
 link.
 
 ## Expected output

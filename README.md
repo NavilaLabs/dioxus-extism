@@ -82,7 +82,7 @@ dx serve
 
 **3. Open the browser**
 
-Navigate to [http://localhost:8080](http://localhost:8080).
+Navigate to [http://localhost:3010](http://localhost:3010).
 
 Expected: the page shows "Hello Plugin Example" as the static heading, and "Hello from a WASM plugin!" inside a `div.hello-from-plugin` contributed by the plugin.
 
@@ -107,7 +107,7 @@ dx serve
 
 **3. Open the browser**
 
-Navigate to [http://localhost:8080](http://localhost:8080), then click "Go to product 42".
+Navigate to [http://localhost:3010](http://localhost:3010), then click "Go to product 42".
 
 Expected on the product page:
 - `✨ Enhanced by plugin — product 42` header added by the plugin
@@ -137,7 +137,7 @@ dx serve
 
 **3. Open the browser**
 
-Navigate to [http://localhost:8080](http://localhost:8080).
+Navigate to [http://localhost:3010](http://localhost:3010).
 
 Expected: an activity feed card with "Latest activity / User alice posted a comment." and a "👍 Like" button, plus a "🔗 Share — injected by plugin_b" button injected by `plugin_b` into the actions area.
 
@@ -166,7 +166,7 @@ dx serve
 
 **3. Open the browser**
 
-Navigate to [http://localhost:8080](http://localhost:8080), then click any article link.
+Navigate to [http://localhost:3010](http://localhost:3010), then click any article link.
 
 Expected on an article page:
 - Static article content rendered by the host
@@ -202,7 +202,7 @@ dx serve
 
 **3. Open the browser**
 
-Navigate to [http://localhost:8080](http://localhost:8080).
+Navigate to [http://localhost:3010](http://localhost:3010).
 
 Expected:
 - Home page has a "trending" banner injected before the page content by the stats plugin (route `inject-before` on `/`)
@@ -329,7 +329,7 @@ dx serve --addr 0.0.0.0 --port 3000
 | Flag     | Default     | Description              |
 |----------|-------------|--------------------------|
 | `--addr` | `127.0.0.1` | IP address to bind on    |
-| `--port` | `8080`      | TCP port to listen on    |
+| `--port` | `3010`      | TCP port to listen on    |
 
 ---
 
