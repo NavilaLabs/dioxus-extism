@@ -40,7 +40,7 @@ Feature branch: `claude/admiring-goldberg-mijsy`.
 4. ~~**§4 Route-Level `TransformOp::RouteReplace`**~~ ✓ done
 5. ~~**§5 Opaque Trust Tag**~~ ✓ done
 6. ~~**§6 Plugin Registry API**~~ ✓ done
-7. **§7 Observability** — metrics hooks.
+7. ~~**§7 Observability**~~ ✓ done
 
 Each can ship in its own commit/PR (Conventional Commits).
 

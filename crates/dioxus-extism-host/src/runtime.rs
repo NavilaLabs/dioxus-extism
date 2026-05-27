@@ -3,7 +3,7 @@ use std::{
     path::PathBuf,
     sync::{
         Arc,
-        atomic::{AtomicBool, Ordering},
+        atomic::{AtomicBool, AtomicUsize, Ordering},
     },
     time::Duration,
 };
@@ -51,6 +51,33 @@ pub type RouteReplacePolicyFn = dyn Fn(&PluginId, &str) -> bool + Send + Sync;
 /// [`PluginRuntime::register_capability_check`].
 pub type CapabilityCheckFn =
     dyn Fn(&PluginId, &serde_json::Value) -> Result<(), String> + Send + Sync;
+
+// ── Observability ─────────────────────────────────────────────────────────────
+
+/// Observability hook for plugin call metrics.
+///
+/// Implement this trait and register it via [`PluginRuntimeBuilder::with_metrics`] to
+/// receive per-call latency and pool utilization data. dioxus-extism records no metrics
+/// itself — the host decides how to store and expose them.
+pub trait RuntimeMetrics: Send + Sync {
+    /// Called after every plugin WASM function call (success or failure).
+    ///
+    /// `elapsed` is the wall-clock time from the moment `pool.get()` returns a plugin
+    /// instance to the moment `plugin.call()` returns.
+    fn record_call(
+        &self,
+        plugin_id: &PluginId,
+        function_name: &str,
+        elapsed: Duration,
+        success: bool,
+    );
+
+    /// Called just after a pool slot is acquired, reporting instantaneous utilization.
+    ///
+    /// `active` is the number of pool instances currently in use (including the one just
+    /// acquired). `total` is the configured pool size for this plugin.
+    fn record_pool_utilization(&self, plugin_id: &PluginId, active: usize, total: usize);
+}
 
 // ── State type aliases ───────────────────────────────────────────────────────
 
@@ -124,6 +151,11 @@ pub struct PluginSummary {
 pub struct LoadedPlugin {
     pub(crate) manifest: PluginManifest,
     pub(crate) pool: extism::Pool,
+    /// Resolved pool size (number of WASM instances).
+    pub(crate) pool_size: usize,
+    /// Number of pool instances currently checked out. Shared with call sites for
+    /// utilization metrics — incremented before `pool.get()`, decremented on drop.
+    pub(crate) active_count: Arc<AtomicUsize>,
     pub(crate) enabled: AtomicBool,
     pub(crate) config: PluginInstallConfig,
     /// Shared context for host function callbacks. Updated before each call.
@@ -315,6 +347,10 @@ pub struct ApiRouteEntry {
     pub handler_fn: String,
     /// Pool for the owning plugin — cheap to clone (Arc internally).
     pub pool: extism::Pool,
+    /// Active-instance counter for pool utilization metrics.
+    pub active_count: Arc<AtomicUsize>,
+    /// Configured pool size for this plugin.
+    pub pool_size: usize,
 }
 
 /// Maps `(method_str, path_str)` to the plugin that handles it.
@@ -330,6 +366,8 @@ pub struct PageRouteEntry {
     pub plugin_id: PluginId,
     pub handler_fn: String,
     pub pool: extism::Pool,
+    pub active_count: Arc<AtomicUsize>,
+    pub pool_size: usize,
     pub bypass_layout: bool,
     pub title: Option<String>,
     /// The declared route pattern (`:param` syntax) stored for param extraction.
@@ -429,6 +467,8 @@ pub struct PluginRuntime {
     pub(crate) trust_keys: Vec<TrustKey>,
     /// If `true`, plugins without a valid Ed25519 signature are rejected at load time.
     pub(crate) require_signature: bool,
+    /// Optional observability hook for call latency and pool utilization metrics.
+    pub(crate) metrics: Option<Arc<dyn RuntimeMetrics>>,
 }
 
 impl PluginRuntime {
@@ -703,7 +743,7 @@ impl PluginRuntime {
         let mut results = Vec::with_capacity(entries.len());
 
         for (priority, plugin_id) in entries {
-            let (pool, enabled) = {
+            let (pool, active_count, pool_size, enabled) = {
                 let plugins = self.plugins.read().await;
                 match plugins.get(&plugin_id) {
                     Some(p) => {
@@ -728,7 +768,7 @@ impl PluginRuntime {
                             });
                             continue;
                         }
-                        (p.pool.clone(), p.enabled.load(Ordering::Relaxed))
+                        (p.pool.clone(), p.active_count.clone(), p.pool_size, p.enabled.load(Ordering::Relaxed))
                     }
                     None => continue,
                 }
@@ -748,6 +788,10 @@ impl PluginRuntime {
 
             match call_export::<SessionCtx, PluginView>(
                 pool,
+                plugin_id.clone(),
+                active_count,
+                pool_size,
+                self.metrics.clone(),
                 "slot_render",
                 session.clone(),
                 session.clone(),
@@ -821,10 +865,10 @@ impl PluginRuntime {
         let mut current = serde_json::to_value(&context)?;
 
         for (_, plugin_id) in entries {
-            let (pool, enabled) = {
+            let (pool, active_count, pool_size, enabled) = {
                 let plugins = self.plugins.read().await;
                 match plugins.get(&plugin_id) {
-                    Some(p) => (p.pool.clone(), p.enabled.load(Ordering::Relaxed)),
+                    Some(p) => (p.pool.clone(), p.active_count.clone(), p.pool_size, p.enabled.load(Ordering::Relaxed)),
                     None => continue,
                 }
             };
@@ -840,6 +884,10 @@ impl PluginRuntime {
             let export = format!("hook_{}", hook_name.replace('-', "_"));
             match call_export::<(HookCall, SessionCtx), HookResult>(
                 pool,
+                plugin_id.clone(),
+                active_count,
+                pool_size,
+                self.metrics.clone(),
                 export,
                 (hook_call, session.clone()),
                 session.clone(),
@@ -878,10 +926,12 @@ impl PluginRuntime {
         event_data: serde_json::Value,
         session: &SessionCtx,
     ) -> Result<ViewUpdate, PluginRuntimeError> {
-        let pool = {
+        let (pool, active_count, pool_size) = {
             let plugins = self.plugins.read().await;
             match plugins.get(plugin_id) {
-                Some(p) if p.enabled.load(Ordering::Relaxed) => p.pool.clone(),
+                Some(p) if p.enabled.load(Ordering::Relaxed) => {
+                    (p.pool.clone(), p.active_count.clone(), p.pool_size)
+                }
                 Some(_) => {
                     return Err(PluginRuntimeError::PluginDisabled(plugin_id.clone()));
                 }
@@ -893,6 +943,10 @@ impl PluginRuntime {
 
         call_export::<(HandlerId, serde_json::Value, SessionCtx), ViewUpdate>(
             pool,
+            plugin_id.clone(),
+            active_count,
+            pool_size,
+            self.metrics.clone(),
             "on_interaction",
             (handler_id.clone(), event_data, session.clone()),
             session.clone(),
@@ -915,10 +969,10 @@ impl PluginRuntime {
         };
 
         for (_, plugin_id) in subscribers {
-            let (pool, enabled) = {
+            let (pool, active_count, pool_size, enabled) = {
                 let plugins = self.plugins.read().await;
                 match plugins.get(&plugin_id) {
-                    Some(p) => (p.pool.clone(), p.enabled.load(Ordering::Relaxed)),
+                    Some(p) => (p.pool.clone(), p.active_count.clone(), p.pool_size, p.enabled.load(Ordering::Relaxed)),
                     None => continue,
                 }
             };
@@ -928,6 +982,10 @@ impl PluginRuntime {
 
             if let Err(e) = call_export::<(PluginEvent, SessionCtx), ()>(
                 pool,
+                plugin_id.clone(),
+                active_count,
+                pool_size,
+                self.metrics.clone(),
                 "on_event",
                 (event.clone(), session.clone()),
                 session.clone(),
@@ -970,14 +1028,14 @@ impl PluginRuntime {
         let mut after = vec![];
 
         for entry in entries {
-            let pool = {
+            let (pool, active_count, pool_size) = {
                 let plugins = self.plugins.read().await;
                 match plugins.get(&entry.plugin_id) {
                     Some(p)
                         if p.enabled.load(Ordering::Relaxed)
                             && Self::is_compatible(p, &session.client) =>
                     {
-                        p.pool.clone()
+                        (p.pool.clone(), p.active_count.clone(), p.pool_size)
                     }
                     _ => continue,
                 }
@@ -992,6 +1050,10 @@ impl PluginRuntime {
 
             match call_export::<TransformInput, TransformOutput>(
                 pool,
+                entry.plugin_id.clone(),
+                active_count,
+                pool_size,
+                self.metrics.clone(),
                 entry.transform_fn.clone(),
                 input,
                 session.clone(),
@@ -1072,14 +1134,14 @@ impl PluginRuntime {
             let mut current = seed;
 
             for entry in &wrap_entries {
-                let pool = {
+                let (pool, active_count, pool_size) = {
                     let plugins = self.plugins.read().await;
                     match plugins.get(&entry.plugin_id) {
                         Some(p)
                             if p.enabled.load(Ordering::Relaxed)
                                 && Self::is_compatible(p, &session.client) =>
                         {
-                            p.pool.clone()
+                            (p.pool.clone(), p.active_count.clone(), p.pool_size)
                         }
                         _ => continue,
                     }
@@ -1103,6 +1165,10 @@ impl PluginRuntime {
 
                 match call_export::<TransformInput, TransformOutput>(
                     pool,
+                    entry.plugin_id.clone(),
+                    active_count,
+                    pool_size,
+                    self.metrics.clone(),
                     entry.transform_fn.clone(),
                     input,
                     session.clone(),
@@ -1146,14 +1212,14 @@ impl PluginRuntime {
                         continue;
                     }
                 }
-                let pool = {
+                let (pool, active_count, pool_size) = {
                     let plugins = self.plugins.read().await;
                     match plugins.get(&entry.plugin_id) {
                         Some(p)
                             if p.enabled.load(Ordering::Relaxed)
                                 && Self::is_compatible(p, &session.client) =>
                         {
-                            p.pool.clone()
+                            (p.pool.clone(), p.active_count.clone(), p.pool_size)
                         }
                         _ => continue 'outer,
                     }
@@ -1174,6 +1240,10 @@ impl PluginRuntime {
                 };
                 match call_export::<TransformInput, TransformOutput>(
                     pool,
+                    entry.plugin_id.clone(),
+                    active_count,
+                    pool_size,
+                    self.metrics.clone(),
                     entry.transform_fn.clone(),
                     input,
                     session.clone(),
@@ -1208,14 +1278,14 @@ impl PluginRuntime {
         let mut views = Vec::with_capacity(entries.len());
 
         for entry in entries {
-            let pool = {
+            let (pool, active_count, pool_size) = {
                 let plugins = self.plugins.read().await;
                 match plugins.get(&entry.plugin_id) {
                     Some(p)
                         if p.enabled.load(Ordering::Relaxed)
                             && Self::is_compatible(p, &session.client) =>
                     {
-                        p.pool.clone()
+                        (p.pool.clone(), p.active_count.clone(), p.pool_size)
                     }
                     _ => continue,
                 }
@@ -1239,6 +1309,10 @@ impl PluginRuntime {
 
             match call_export::<TransformInput, TransformOutput>(
                 pool,
+                entry.plugin_id.clone(),
+                active_count,
+                pool_size,
+                self.metrics.clone(),
                 entry.transform_fn.clone(),
                 input,
                 session.clone(),
@@ -1291,14 +1365,14 @@ impl PluginRuntime {
         }
         let mut current = view;
         for (node_selector, entry) in entries {
-            let pool = {
+            let (pool, active_count, pool_size) = {
                 let plugins = self.plugins.read().await;
                 match plugins.get(&entry.plugin_id) {
                     Some(p)
                         if p.enabled.load(Ordering::Relaxed)
                             && Self::is_compatible(p, &session.client) =>
                     {
-                        p.pool.clone()
+                        (p.pool.clone(), p.active_count.clone(), p.pool_size)
                     }
                     _ => continue,
                 }
@@ -1309,6 +1383,10 @@ impl PluginRuntime {
                 entry.op.clone(),
                 entry.transform_fn.clone(),
                 pool,
+                entry.plugin_id.clone(),
+                active_count,
+                pool_size,
+                self.metrics.clone(),
                 context.clone(),
                 session.clone(),
             )
@@ -1556,6 +1634,8 @@ impl PluginRuntime {
                 LoadedPlugin {
                     manifest: new_manifest,
                     pool: new_pool,
+                    pool_size,
+                    active_count: Arc::new(AtomicUsize::new(0)),
                     enabled: AtomicBool::new(true),
                     config,
                     ctx_arc: new_ctx_arc,
@@ -1880,6 +1960,8 @@ impl PluginRuntime {
                 LoadedPlugin {
                     manifest,
                     pool,
+                    pool_size,
+                    active_count: Arc::new(AtomicUsize::new(0)),
                     enabled: AtomicBool::new(true),
                     config,
                     ctx_arc,
@@ -1966,7 +2048,7 @@ impl PluginRuntime {
         I: Serialize,
         O: DeserializeOwned + Send + 'static,
     {
-        let pool = {
+        let (pool, active_count, pool_size) = {
             let plugins = self.plugins.read().await;
             let plugin = plugins
                 .get(plugin_id)
@@ -1974,24 +2056,53 @@ impl PluginRuntime {
             if !plugin.enabled.load(Ordering::Relaxed) {
                 return Err(PluginRuntimeError::PluginDisabled(plugin_id.clone()));
             }
-            plugin.pool.clone()
+            (plugin.pool.clone(), plugin.active_count.clone(), plugin.pool_size)
         };
 
         // Serialize up front so the Value (Send + 'static) can cross the spawn_blocking boundary.
         let input_value = serde_json::to_value(input)?;
         let fn_name: String = function_name.into();
+        let plugin_id = plugin_id.clone();
+        let metrics = self.metrics.clone();
         let session = session.clone();
 
         tokio::task::spawn_blocking(move || -> Result<O, PluginRuntimeError> {
             host_functions::set_call_session(session.session_id.clone(), session.client.clone());
-            let mut p = pool
+
+            active_count.fetch_add(1, Ordering::Relaxed);
+            let pool_result = pool
                 .get(Duration::from_secs(5))
                 .map_err(|e| PluginRuntimeError::CallFailed { source: e })?
-                .ok_or_else(|| PluginRuntimeError::Pool("call_plugin: pool timeout".into()))?;
-            let Json(result) = p
+                .ok_or_else(|| PluginRuntimeError::Pool("call_plugin: pool timeout".into()));
+
+            let mut p = match pool_result {
+                Ok(p) => p,
+                Err(e) => {
+                    active_count.fetch_sub(1, Ordering::Relaxed);
+                    return Err(e);
+                }
+            };
+
+            if let Some(m) = &metrics {
+                let active = active_count.load(Ordering::Relaxed);
+                m.record_pool_utilization(&plugin_id, active, pool_size);
+            }
+
+            let start = std::time::Instant::now();
+            let result = p
                 .call::<Json<serde_json::Value>, Json<O>>(&fn_name, Json(input_value))
-                .map_err(|e| PluginRuntimeError::CallFailed { source: e })?;
-            Ok(result)
+                .map_err(|e| PluginRuntimeError::CallFailed { source: e });
+            let elapsed = start.elapsed();
+
+            drop(p);
+            active_count.fetch_sub(1, Ordering::Relaxed);
+
+            if let Some(m) = &metrics {
+                m.record_call(&plugin_id, &fn_name, elapsed, result.is_ok());
+            }
+
+            let Json(value) = result?;
+            Ok(value)
         })
         .await
         .map_err(|e| PluginRuntimeError::TaskPanic(e.to_string()))?
@@ -2087,6 +2198,8 @@ impl PluginRuntime {
                         plugin_id: id.clone(),
                         handler_fn: decl.handler_fn.clone(),
                         pool: loaded.pool.clone(),
+                        active_count: loaded.active_count.clone(),
+                        pool_size: loaded.pool_size,
                     },
                 );
             }
@@ -2110,6 +2223,8 @@ impl PluginRuntime {
                         plugin_id: id.clone(),
                         handler_fn: decl.render_fn.clone(),
                         pool: loaded.pool.clone(),
+                        active_count: loaded.active_count.clone(),
+                        pool_size: loaded.pool_size,
                         bypass_layout: decl.bypass_layout,
                         title: decl.title.clone(),
                         pattern,
@@ -2185,6 +2300,10 @@ fn traverse_and_apply(
     op: TransformOp,
     transform_fn: String,
     pool: extism::Pool,
+    plugin_id: PluginId,
+    active_count: Arc<AtomicUsize>,
+    pool_size: usize,
+    metrics: Option<Arc<dyn RuntimeMetrics>>,
     context: TransformContext,
     session: SessionCtx,
 ) -> futures::future::BoxFuture<'static, PluginView> {
@@ -2196,6 +2315,10 @@ fn traverse_and_apply(
             op: &op,
             transform_fn: &transform_fn,
             pool: pool.clone(),
+            plugin_id: plugin_id.clone(),
+            active_count: active_count.clone(),
+            pool_size,
+            metrics: metrics.clone(),
             context: &context,
             session: &session,
             recursive,
@@ -2227,6 +2350,10 @@ struct WithinDispatch<'a> {
     op: &'a TransformOp,
     transform_fn: &'a str,
     pool: extism::Pool,
+    plugin_id: PluginId,
+    active_count: Arc<AtomicUsize>,
+    pool_size: usize,
+    metrics: Option<Arc<dyn RuntimeMetrics>>,
     context: &'a TransformContext,
     session: &'a SessionCtx,
     recursive: bool,
@@ -2273,6 +2400,10 @@ async fn apply_within_op_to_child(
         };
         match call_export::<TransformInput, TransformOutput>(
             pool.clone(),
+            d.plugin_id.clone(),
+            d.active_count.clone(),
+            d.pool_size,
+            d.metrics.clone(),
             transform_fn.to_string(),
             input,
             session.clone(),
@@ -2313,6 +2444,10 @@ async fn apply_within_op_to_child(
             op.clone(),
             transform_fn.to_string(),
             pool,
+            d.plugin_id.clone(),
+            d.active_count.clone(),
+            d.pool_size,
+            d.metrics.clone(),
             context.clone(),
             session.clone(),
         )
@@ -2339,10 +2474,15 @@ fn view_contains_content_placeholder(view: &PluginView) -> bool {
 /// Call a WASM plugin export with JSON I/O on a blocking thread.
 ///
 /// Sets the thread-local session context before calling so host function callbacks
-/// can read the current session without per-instance `UserData`.
-#[tracing::instrument(skip(pool, input, session), fields(export))]
+/// can read the current session without per-instance `UserData`. When `metrics` is
+/// `Some`, records call latency and pool utilization after each call.
+#[tracing::instrument(skip(pool, active_count, metrics, input, session), fields(export))]
 async fn call_export<I, O>(
     pool: extism::Pool,
+    plugin_id: PluginId,
+    active_count: Arc<AtomicUsize>,
+    pool_size: usize,
+    metrics: Option<Arc<dyn RuntimeMetrics>>,
     export: impl Into<String>,
     input: I,
     session: SessionCtx,
@@ -2354,14 +2494,41 @@ where
     let export: String = export.into();
     tokio::task::spawn_blocking(move || {
         host_functions::set_call_session(session.session_id.clone(), session.client.clone());
-        let mut plugin = pool
+
+        active_count.fetch_add(1, Ordering::Relaxed);
+        let plugin_result = pool
             .get(Duration::from_secs(5))
             .map_err(|e| PluginRuntimeError::CallFailed { source: e })?
-            .ok_or_else(|| PluginRuntimeError::Pool("timeout waiting for plugin instance".into()))?;
-        let Json(result) = plugin
+            .ok_or_else(|| PluginRuntimeError::Pool("timeout waiting for plugin instance".into()));
+
+        let mut plugin = match plugin_result {
+            Ok(p) => p,
+            Err(e) => {
+                active_count.fetch_sub(1, Ordering::Relaxed);
+                return Err(e);
+            }
+        };
+
+        if let Some(m) = &metrics {
+            let active = active_count.load(Ordering::Relaxed);
+            m.record_pool_utilization(&plugin_id, active, pool_size);
+        }
+
+        let start = std::time::Instant::now();
+        let result = plugin
             .call::<Json<I>, Json<O>>(&export, Json(input))
-            .map_err(|e| PluginRuntimeError::CallFailed { source: e })?;
-        Ok(result)
+            .map_err(|e| PluginRuntimeError::CallFailed { source: e });
+        let elapsed = start.elapsed();
+
+        drop(plugin);
+        active_count.fetch_sub(1, Ordering::Relaxed);
+
+        if let Some(m) = &metrics {
+            m.record_call(&plugin_id, &export, elapsed, result.is_ok());
+        }
+
+        let Json(value) = result?;
+        Ok(value)
     })
     .await
     .map_err(|e| PluginRuntimeError::TaskPanic(e.to_string()))?
@@ -2433,6 +2600,7 @@ pub struct PluginRuntimeBuilder {
     route_replace_policy: Option<Arc<RouteReplacePolicyFn>>,
     trust_keys: Vec<TrustKey>,
     require_signature: bool,
+    metrics: Option<Arc<dyn RuntimeMetrics>>,
 }
 
 impl PluginRuntimeBuilder {
@@ -2565,6 +2733,16 @@ impl PluginRuntimeBuilder {
     #[must_use]
     pub const fn with_require_signature(mut self, require: bool) -> Self {
         self.require_signature = require;
+        self
+    }
+
+    /// Register an observability hook that receives per-call latency and pool-utilization data.
+    ///
+    /// Only one metrics implementation is active at a time; calling this more than once
+    /// replaces the previous one.
+    #[must_use]
+    pub fn with_metrics(mut self, metrics: impl RuntimeMetrics + 'static) -> Self {
+        self.metrics = Some(Arc::new(metrics));
         self
     }
 
@@ -2824,6 +3002,8 @@ impl PluginRuntimeBuilder {
                 LoadedPlugin {
                     manifest: plugin_manifest,
                     pool,
+                    pool_size,
+                    active_count: Arc::new(AtomicUsize::new(0)),
                     enabled: AtomicBool::new(true),
                     config,
                     ctx_arc,
@@ -2882,6 +3062,7 @@ impl PluginRuntimeBuilder {
             route_replace_policy: RwLock::new(self.route_replace_policy),
             trust_keys,
             require_signature,
+            metrics: self.metrics,
         });
 
         // Event dispatch task: receives plugin-emitted events and fans them out.
@@ -2988,6 +3169,7 @@ impl PluginRuntime {
 
             let handler = {
                 let entry = entry.clone();
+                let metrics = self.metrics.clone();
                 move |
                     Path(path_params): Path<HashMap<String, String>>,
                     Query(query_params): Query<HashMap<String, String>>,
@@ -2995,8 +3177,11 @@ impl PluginRuntime {
                     body: Bytes,
                 | {
                     let pool = entry.pool.clone();
+                    let active_count = entry.active_count.clone();
+                    let pool_size = entry.pool_size;
                     let handler_fn = entry.handler_fn.clone();
                     let plugin_id = entry.plugin_id.clone();
+                    let metrics = metrics.clone();
                     async move {
                         let body_json = if body.is_empty() {
                             None
@@ -3027,6 +3212,10 @@ impl PluginRuntime {
                         };
                         match call_export::<ApiRequest, ApiResponse>(
                             pool,
+                            plugin_id.clone(),
+                            active_count,
+                            pool_size,
+                            metrics,
                             handler_fn,
                             request,
                             stub,
@@ -3134,6 +3323,10 @@ impl PluginRuntime {
 
         let view = call_export::<PageRouteInput, PluginView>(
             entry.pool.clone(),
+            entry.plugin_id.clone(),
+            entry.active_count.clone(),
+            entry.pool_size,
+            self.metrics.clone(),
             entry.handler_fn.clone(),
             input,
             session.clone(),

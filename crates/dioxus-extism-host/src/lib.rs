@@ -17,5 +17,5 @@ pub use persistence::JsonFilePersistence;
 pub use runtime::{
     CapabilityCheckFn, GlobalStateMap, HookOutcome, PluginInstallConfig, PluginRuntime,
     PluginRuntimeBuilder, PluginRuntimeExt, PluginSource, PluginSummary, RouteReplacePolicyFn,
-    SessionStateMap, StatePersistenceProvider, TransformEntry, TransformRegistry,
+    RuntimeMetrics, SessionStateMap, StatePersistenceProvider, TransformEntry, TransformRegistry,
 };
