@@ -105,6 +105,20 @@ impl PluginInstallConfig {
     }
 }
 
+// ── Plugin summary (public view of a loaded plugin) ───────────────────────────
+
+/// A lightweight snapshot of a loaded plugin's state, returned by
+/// [`PluginRuntime::list_plugins`].
+#[derive(Debug, Clone)]
+pub struct PluginSummary {
+    pub id: PluginId,
+    pub version: String,
+    pub enabled: bool,
+    pub trust_tag: TrustTag,
+    pub min_protocol_version: u32,
+    pub min_app_version: u32,
+}
+
 // ── Loaded plugin ─────────────────────────────────────────────────────────────
 
 pub struct LoadedPlugin {
@@ -1634,6 +1648,298 @@ impl PluginRuntime {
 
         let _ = self.override_map_tx.send(new_map);
         Ok(())
+    }
+
+    // ── Plugin Registry API (§6) ──────────────────────────────────────────────
+
+    /// Returns a snapshot of all currently loaded plugins.
+    pub async fn list_plugins(&self) -> Vec<PluginSummary> {
+        self.plugins
+            .read()
+            .await
+            .values()
+            .map(|p| PluginSummary {
+                id: p.manifest.id.clone(),
+                version: p.manifest.version.clone(),
+                enabled: p.enabled.load(Ordering::Relaxed),
+                trust_tag: p.trust_tag.clone(),
+                min_protocol_version: p.manifest.min_protocol_version,
+                min_app_version: p.manifest.min_app_version,
+            })
+            .collect()
+    }
+
+    /// Install a new plugin at runtime.
+    ///
+    /// Validates capabilities, verifies the trust tag, runs manifest-extension
+    /// handlers, and inserts the plugin into the live registry. The override map
+    /// is updated and subscribers are notified.
+    ///
+    /// If a plugin with the same id is already loaded, use [`reload_plugin`] instead.
+    ///
+    /// Note: extra host functions registered at builder time are **not** available
+    /// to plugins installed via this method — only the standard host functions are wired.
+    ///
+    /// # Errors
+    /// Returns `PluginRuntimeError` if the source cannot be fetched, the manifest
+    /// is incompatible, capabilities are denied, or signature verification fails.
+    #[allow(clippy::too_many_lines)]
+    pub async fn install(
+        &self,
+        source: PluginSource,
+        config: PluginInstallConfig,
+    ) -> Result<PluginId, PluginRuntimeError> {
+        let manifest = load_plugin_manifest(&source).await?;
+
+        if manifest.min_protocol_version > PROTOCOL_VERSION {
+            return Err(PluginRuntimeError::ProtocolVersionMismatch {
+                required: manifest.min_protocol_version,
+                host: PROTOCOL_VERSION,
+            });
+        }
+
+        // Reject duplicate IDs.
+        if self.plugins.read().await.contains_key(&manifest.id) {
+            return Err(PluginRuntimeError::CapabilityDenied {
+                plugin: manifest.id.clone(),
+                capability: "plugin already installed; use reload_plugin to update".into(),
+            });
+        }
+
+        // Validate capabilities.
+        let mut granted_invocations = HashSet::new();
+        let mut granted_global_read = HashSet::new();
+        let mut granted_global_write = HashSet::new();
+        let mut granted_http_hosts: Vec<String> = Vec::new();
+        let mut granted_plugin_state_reads: HashMap<PluginId, HashSet<String>> = HashMap::new();
+
+        for cap in &manifest.host_capabilities {
+            match cap {
+                HostCapability::Invoke { names } => {
+                    for name in names {
+                        if !self.invocation_registry.handlers.contains_key(name.as_str()) {
+                            return Err(PluginRuntimeError::CapabilityDenied {
+                                plugin: manifest.id.clone(),
+                                capability: format!("Invoke({name}): not registered"),
+                            });
+                        }
+                        granted_invocations.insert(name.clone());
+                    }
+                }
+                HostCapability::GlobalStateRead { keys } => {
+                    granted_global_read.extend(keys.iter().cloned());
+                }
+                HostCapability::GlobalStateWrite { keys } => {
+                    granted_global_write.extend(keys.iter().cloned());
+                }
+                HostCapability::Http { allowed_hosts } => {
+                    granted_http_hosts.extend(allowed_hosts.iter().cloned());
+                }
+                HostCapability::ReadPluginState { plugin_id, keys } => {
+                    granted_plugin_state_reads
+                        .entry(plugin_id.clone())
+                        .or_default()
+                        .extend(keys.iter().cloned());
+                }
+                HostCapability::Custom { namespace, value } => {
+                    let checks = self.capability_checks.read().await;
+                    match checks.get(namespace) {
+                        None => return Err(PluginRuntimeError::CapabilityDenied {
+                            plugin: manifest.id.clone(),
+                            capability: format!("Custom({namespace}): no check registered"),
+                        }),
+                        Some(check) => check(&manifest.id, value).map_err(|reason| {
+                            PluginRuntimeError::CapabilityDenied {
+                                plugin: manifest.id.clone(),
+                                capability: format!("Custom({namespace}): {reason}"),
+                            }
+                        })?,
+                    }
+                }
+                _ => {}
+            }
+        }
+
+        // Validate manifest extensions.
+        {
+            let handlers = self.extension_handlers.read().await;
+            for (ns, val) in &manifest.extensions {
+                match handlers.get(ns) {
+                    Some(handler) => handler
+                        .validate(&manifest.id, val)
+                        .map_err(|source| PluginRuntimeError::ManifestExtension {
+                            plugin: manifest.id.clone(),
+                            source,
+                        })?,
+                    None => match &self.on_unknown_extension {
+                        OnUnknownExtension::Warn => {
+                            tracing::warn!(plugin = ?manifest.id, namespace = %ns,
+                                "unknown manifest extension namespace");
+                        }
+                        OnUnknownExtension::Error => {
+                            return Err(PluginRuntimeError::UnknownManifestExtension {
+                                plugin: manifest.id.clone(),
+                                namespace: ns.clone(),
+                            });
+                        }
+                        OnUnknownExtension::Ignore => {}
+                    },
+                }
+            }
+        }
+
+        // Fetch bytes + trust tag.
+        let bytes = fetch_and_verify(&source).await?;
+        let trust_tag = compute_trust_tag(
+            &bytes,
+            config.signature.as_deref(),
+            config.key_id.as_deref(),
+            &self.trust_keys,
+        );
+        if !trust_tag.verified && self.require_signature {
+            return Err(PluginRuntimeError::UntrustedPlugin(manifest.id.clone()));
+        }
+
+        // Build CallCtx and pool.
+        let ctx = CallCtx {
+            caller: manifest.id.clone(),
+            session_states: self.session_states.clone(),
+            session_last_access: self.session_last_access.clone(),
+            global_states: self.global_states.clone(),
+            invocation_registry: self.invocation_registry.clone(),
+            persistence: self.persistence.clone(),
+            granted_invocations,
+            granted_global_read,
+            granted_global_write,
+            granted_http_hosts,
+            granted_plugin_state_reads,
+            event_tx: self.event_tx.clone(),
+        };
+        let user_data = extism::UserData::new(ctx);
+        let ctx_arc = user_data
+            .get()
+            .map_err(|e| PluginRuntimeError::Pool(format!("UserData::get failed: {e}")))?;
+        let host_fns = make_host_functions(user_data);
+
+        let pool_size = config
+            .pool_size
+            .unwrap_or_else(|| std::thread::available_parallelism().map_or(4, usize::from));
+        let ext_manifest = extism::Manifest::new([extism::Wasm::data(bytes)]);
+        let fns = host_fns;
+        let pool = extism::Pool::new_from_builder(
+            move || {
+                extism::PluginBuilder::new(ext_manifest.clone())
+                    .with_wasi(true)
+                    .with_functions(fns.clone())
+                    .build()
+            },
+            extism::PoolBuilder::default().with_max_instances(pool_size),
+        );
+
+        // Call WASM on_load if exported.
+        let has_on_load = pool
+            .function_exists("on_load", Duration::from_secs(5))
+            .map_err(|e| PluginRuntimeError::CallFailed { source: e })?;
+        if has_on_load {
+            let pool_clone = pool.clone();
+            let init_session = SessionCtx {
+                session_id: SessionId("__init__".into()),
+                user_id: None,
+                client: ClientCapabilities {
+                    protocol_version: PROTOCOL_VERSION,
+                    app_version: 0,
+                    registered_host_components: vec![],
+                },
+                caller: None,
+            };
+            let init_clone = init_session.clone();
+            tokio::task::spawn_blocking(move || {
+                host_functions::set_call_session(
+                    init_clone.session_id.clone(),
+                    init_clone.client.clone(),
+                );
+                let mut p = pool_clone
+                    .get(Duration::from_secs(5))
+                    .map_err(|e| PluginRuntimeError::CallFailed { source: e })?
+                    .ok_or_else(|| PluginRuntimeError::Pool("timeout on on_load".into()))?;
+                p.call::<Json<SessionCtx>, ()>("on_load", Json(init_session))
+                    .map_err(|e| PluginRuntimeError::CallFailed { source: e })
+            })
+            .await
+            .map_err(|e| PluginRuntimeError::TaskPanic(e.to_string()))??;
+        }
+
+        // Insert into registry — single write lock.
+        let plugin_id = manifest.id.clone();
+        let extensions = manifest.extensions.clone();
+        let new_map = {
+            let mut plugins = self.plugins.write().await;
+            let mut regs = self.registries.write().await;
+            plugins.insert(
+                plugin_id.clone(),
+                LoadedPlugin {
+                    manifest,
+                    pool,
+                    enabled: AtomicBool::new(true),
+                    config,
+                    ctx_arc,
+                    trust_tag,
+                },
+            );
+            let mut new_regs =
+                Self::build_registries(&plugins, self.plugin_page_prefix.as_deref())?;
+            new_regs.override_map.version = regs.override_map.version + 1;
+            *regs = new_regs;
+            regs.override_map.clone()
+        };
+
+        // Extension on_load after locks released.
+        {
+            let handlers = self.extension_handlers.read().await;
+            let mut on_load_err: Option<PluginRuntimeError> = None;
+            for (ns, val) in &extensions {
+                if let Some(handler) = handlers.get(ns) {
+                    if let Err(source) = handler.on_load(&plugin_id, val) {
+                        on_load_err = Some(PluginRuntimeError::ManifestExtension {
+                            plugin: plugin_id.clone(),
+                            source,
+                        });
+                        break;
+                    }
+                }
+            }
+            if let Some(err) = on_load_err {
+                let _ = self.plugins.write().await.swap_remove(&plugin_id);
+                return Err(err);
+            }
+        }
+
+        let _ = self.override_map_tx.send(new_map);
+        Ok(plugin_id)
+    }
+
+    /// Remove a plugin from the runtime. Delegates to [`unload_plugin`].
+    ///
+    /// # Errors
+    /// Returns `PluginRuntimeError::PluginNotFound` if the plugin is not registered.
+    pub async fn uninstall(&self, plugin_id: &PluginId) -> Result<(), PluginRuntimeError> {
+        self.unload_plugin(plugin_id).await
+    }
+
+    /// Enable a plugin. Delegates to [`enable_plugin`].
+    ///
+    /// # Errors
+    /// Returns `PluginRuntimeError::PluginNotFound` if the plugin is not registered.
+    pub async fn enable(&self, plugin_id: &PluginId) -> Result<(), PluginRuntimeError> {
+        self.enable_plugin(plugin_id).await
+    }
+
+    /// Disable a plugin. Delegates to [`disable_plugin`].
+    ///
+    /// # Errors
+    /// Returns `PluginRuntimeError::PluginNotFound` if the plugin is not registered.
+    pub async fn disable(&self, plugin_id: &PluginId) -> Result<(), PluginRuntimeError> {
+        self.disable_plugin(plugin_id).await
     }
 
     // ── Generic plugin-function dispatch (§2) ─────────────────────────────────

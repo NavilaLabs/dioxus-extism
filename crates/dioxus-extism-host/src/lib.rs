@@ -16,6 +16,6 @@ pub use trust::{TrustKey, TrustTag};
 pub use persistence::JsonFilePersistence;
 pub use runtime::{
     CapabilityCheckFn, GlobalStateMap, HookOutcome, PluginInstallConfig, PluginRuntime,
-    PluginRuntimeBuilder, PluginRuntimeExt, PluginSource, RouteReplacePolicyFn, SessionStateMap,
-    StatePersistenceProvider, TransformEntry, TransformRegistry,
+    PluginRuntimeBuilder, PluginRuntimeExt, PluginSource, PluginSummary, RouteReplacePolicyFn,
+    SessionStateMap, StatePersistenceProvider, TransformEntry, TransformRegistry,
 };
