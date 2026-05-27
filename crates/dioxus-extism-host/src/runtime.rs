@@ -24,6 +24,7 @@ use tokio::sync::{RwLock, broadcast, mpsc};
 use crate::error::{InvocationError, PersistenceError, PluginRuntimeError};
 use crate::host_functions::{self, CallCtx, make_host_functions};
 use crate::manifest_extension::{ManifestExtensionHandler, OnUnknownExtension};
+use crate::trust::{TrustKey, TrustTag, compute_trust_tag};
 
 // ── Route replace policy type ─────────────────────────────────────────────────
 
@@ -84,6 +85,11 @@ pub struct PluginInstallConfig {
     pub pool_size: Option<usize>,
     pub max_fuel: Option<u64>,
     pub max_call_duration: Option<Duration>,
+    /// Detached Ed25519 signature over the WASM binary bytes (64 bytes).
+    pub signature: Option<Vec<u8>>,
+    /// Key-id hint: if set, only the [`TrustKey`] with this id is tried.
+    /// If `None`, all configured trust keys are tried.
+    pub key_id: Option<String>,
 }
 
 impl PluginInstallConfig {
@@ -108,6 +114,9 @@ pub struct LoadedPlugin {
     pub(crate) config: PluginInstallConfig,
     /// Shared context for host function callbacks. Updated before each call.
     pub(crate) ctx_arc: Arc<std::sync::Mutex<CallCtx>>,
+    /// Ed25519 verification result recorded at load time. Opaque to dioxus-extism;
+    /// hosts use it via [`PluginRuntime::plugin_trust_tag`] to make their own decisions.
+    pub(crate) trust_tag: TrustTag,
 }
 
 // ── Registries ────────────────────────────────────────────────────────────────
@@ -402,9 +411,22 @@ pub struct PluginRuntime {
     pub(crate) capability_checks: RwLock<HashMap<String, Arc<CapabilityCheckFn>>>,
     /// Optional host policy for `TransformOp::RouteReplace`. `None` means allow all.
     pub(crate) route_replace_policy: RwLock<Option<Arc<RouteReplacePolicyFn>>>,
+    /// Ed25519 public keys used to verify plugin signatures at load time.
+    pub(crate) trust_keys: Vec<TrustKey>,
+    /// If `true`, plugins without a valid Ed25519 signature are rejected at load time.
+    pub(crate) require_signature: bool,
 }
 
 impl PluginRuntime {
+    /// Returns the [`TrustTag`] recorded when the plugin was loaded, or `None` if not found.
+    ///
+    /// Hosts use the tag — together with capability checks (§3) and the route-replace
+    /// policy (§4) — to enforce their own trust policies. dioxus-extism does not act on
+    /// the tag beyond recording it.
+    pub async fn plugin_trust_tag(&self, id: &PluginId) -> Option<TrustTag> {
+        self.plugins.read().await.get(id).map(|p| p.trust_tag.clone())
+    }
+
     /// Register a handler for one manifest extension namespace.
     ///
     /// Affects plugins loaded **after** this call. Already-loaded plugins are not
@@ -1427,6 +1449,17 @@ impl PluginRuntime {
             .pool_size
             .unwrap_or_else(|| std::thread::available_parallelism().map_or(4, usize::from));
         let bytes = fetch_and_verify(&source).await?;
+
+        let trust_tag = compute_trust_tag(
+            &bytes,
+            config.signature.as_deref(),
+            config.key_id.as_deref(),
+            &self.trust_keys,
+        );
+        if !trust_tag.verified && self.require_signature {
+            return Err(PluginRuntimeError::UntrustedPlugin(new_manifest.id.clone()));
+        }
+
         let ext_manifest = extism::Manifest::new([extism::Wasm::data(bytes)]);
         let fns = host_fns;
         let new_pool = extism::Pool::new_from_builder(
@@ -1512,6 +1545,7 @@ impl PluginRuntime {
                     enabled: AtomicBool::new(true),
                     config,
                     ctx_arc: new_ctx_arc,
+                    trust_tag,
                 },
             );
             let mut new_regs =
@@ -2091,6 +2125,8 @@ pub struct PluginRuntimeBuilder {
     on_unknown_extension: OnUnknownExtension,
     capability_checks: Vec<(String, Arc<CapabilityCheckFn>)>,
     route_replace_policy: Option<Arc<RouteReplacePolicyFn>>,
+    trust_keys: Vec<TrustKey>,
+    require_signature: bool,
 }
 
 impl PluginRuntimeBuilder {
@@ -2206,6 +2242,26 @@ impl PluginRuntimeBuilder {
         self
     }
 
+    /// Add an Ed25519 public key used to verify plugin signatures at load time.
+    ///
+    /// Multiple keys may be registered. `key_id` is an arbitrary label stored in
+    /// [`TrustTag::signer_key_id`] when this key successfully verifies a signature.
+    /// `public_key_bytes` must be exactly 32 bytes.
+    #[must_use]
+    pub fn with_trust_key(mut self, key_id: impl Into<String>, public_key_bytes: Vec<u8>) -> Self {
+        self.trust_keys.push(TrustKey { key_id: key_id.into(), public_key_bytes });
+        self
+    }
+
+    /// When `true`, plugins without a valid Ed25519 signature are rejected at load time.
+    ///
+    /// Default: `false` (unsigned plugins load with `TrustTag { verified: false, .. }`).
+    #[must_use]
+    pub const fn with_require_signature(mut self, require: bool) -> Self {
+        self.require_signature = require;
+        self
+    }
+
     /// Provide a persistence backend for `GlobalScope` plugin state.
     #[must_use]
     pub fn with_state_persistence(mut self, provider: impl StatePersistenceProvider) -> Self {
@@ -2272,6 +2328,8 @@ impl PluginRuntimeBuilder {
         let on_unknown_extension = self.on_unknown_extension;
         let capability_checks: HashMap<String, Arc<CapabilityCheckFn>> =
             self.capability_checks.into_iter().collect();
+        let trust_keys = self.trust_keys;
+        let require_signature = self.require_signature;
 
         let mut all_plugins: IndexMap<PluginId, LoadedPlugin> = IndexMap::new();
 
@@ -2392,6 +2450,18 @@ impl PluginRuntimeBuilder {
                 .unwrap_or_else(|| std::thread::available_parallelism().map_or(4, usize::from));
 
             let bytes = fetch_and_verify(&source).await?;
+
+            // Compute trust tag before building the pool.
+            let trust_tag = compute_trust_tag(
+                &bytes,
+                config.signature.as_deref(),
+                config.key_id.as_deref(),
+                &trust_keys,
+            );
+            if !trust_tag.verified && require_signature {
+                return Err(PluginRuntimeError::UntrustedPlugin(plugin_manifest.id.clone()));
+            }
+
             let ext_manifest = extism::Manifest::new([extism::Wasm::data(bytes)]);
             let fns = all_host_fns;
 
@@ -2451,6 +2521,7 @@ impl PluginRuntimeBuilder {
                     enabled: AtomicBool::new(true),
                     config,
                     ctx_arc,
+                    trust_tag,
                 },
             );
 
@@ -2503,6 +2574,8 @@ impl PluginRuntimeBuilder {
             on_unknown_extension,
             capability_checks: RwLock::new(capability_checks),
             route_replace_policy: RwLock::new(self.route_replace_policy),
+            trust_keys,
+            require_signature,
         });
 
         // Event dispatch task: receives plugin-emitted events and fans them out.

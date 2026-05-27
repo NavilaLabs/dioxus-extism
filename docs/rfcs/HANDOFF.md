@@ -37,7 +37,7 @@ Feature branch: `claude/admiring-goldberg-mijsy`.
 1. ~~**§1 Generic Manifest Extensions**~~ ✓ done
 2. ~~**§2 Generic Plugin-Function Dispatch**~~ ✓ done
 3. ~~**§3 Host-Defined Capability Classes**~~ ✓ done
-4. **§4 Route-Level `TransformOp::Replace`** — additive enum variant + resolver change in `PluginAwareRouter`.
+4. ~~**§4 Route-Level `TransformOp::RouteReplace`**~~ ✓ done
 5. **§5 Opaque Trust Tag** — Ed25519 verification + `TrustTag` on `LoadedPlugin`.
 6. **§6 Plugin Registry API** — library-level surface for host admin UIs.
 7. **§7 Observability** — metrics hooks.

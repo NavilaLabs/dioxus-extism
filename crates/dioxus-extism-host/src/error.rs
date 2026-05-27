@@ -68,6 +68,9 @@ pub enum PluginRuntimeError {
 
     #[error("unknown manifest extension namespace {namespace:?} in plugin {plugin:?}")]
     UnknownManifestExtension { plugin: PluginId, namespace: String },
+
+    #[error("plugin {0:?} has no valid Ed25519 signature but require_signature is enabled")]
+    UntrustedPlugin(PluginId),
 }
 
 /// Errors from `dx_invoke` host function calls.

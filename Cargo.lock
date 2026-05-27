@@ -1152,6 +1152,7 @@ dependencies = [
  "futures",
  "indexmap",
  "reqwest",
+ "ring",
  "serde",
  "serde_json",
  "sha2",
