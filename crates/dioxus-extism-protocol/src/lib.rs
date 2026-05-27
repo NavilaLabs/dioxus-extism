@@ -8,7 +8,7 @@
 //! All public enums are `#[non_exhaustive]` — new variants may be added in minor
 //! versions without a major semver bump.
 
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeMap, HashMap, HashSet};
 
 use serde::{Deserialize, Serialize};
 
@@ -171,6 +171,10 @@ pub struct PluginManifest {
     /// New view pages this plugin provides (served under the host's catch-all prefix).
     #[serde(default)]
     pub page_routes: Vec<PageRouteDeclaration>,
+    /// Host-defined manifest extensions. Each key is a namespace (e.g. `"my-host.feature-x"`);
+    /// the value is opaque JSON owned entirely by the host.
+    #[serde(default)]
+    pub extensions: BTreeMap<String, serde_json::Value>,
 }
 
 /// State scope declared by a plugin in its manifest.

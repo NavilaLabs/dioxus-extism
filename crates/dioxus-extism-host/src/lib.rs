@@ -3,12 +3,14 @@
 
 mod error;
 mod host_functions;
+mod manifest_extension;
 mod persistence;
 mod runtime;
 pub mod tree;
 
 pub use error::{InvocationError, PersistenceError, PluginRuntimeError};
 pub use dioxus_extism_protocol::RouteTransforms;
+pub use manifest_extension::{ManifestExtensionError, ManifestExtensionHandler, OnUnknownExtension};
 pub use persistence::JsonFilePersistence;
 pub use runtime::{
     GlobalStateMap, HookOutcome, PluginInstallConfig, PluginRuntime, PluginRuntimeBuilder,

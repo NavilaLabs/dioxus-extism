@@ -1,5 +1,7 @@
 use dioxus_extism_protocol::PluginId;
 
+use crate::manifest_extension::ManifestExtensionError;
+
 /// Runtime errors from plugin operations.
 #[derive(Debug, thiserror::Error)]
 #[non_exhaustive]
@@ -56,6 +58,16 @@ pub enum PluginRuntimeError {
 
     #[error("page route conflict: {path} — claimed by {first:?} and {second:?}")]
     PageRouteConflict { path: String, first: PluginId, second: PluginId },
+
+    #[error("manifest extension error for plugin {plugin:?}: {source}")]
+    ManifestExtension {
+        plugin: PluginId,
+        #[source]
+        source: ManifestExtensionError,
+    },
+
+    #[error("unknown manifest extension namespace {namespace:?} in plugin {plugin:?}")]
+    UnknownManifestExtension { plugin: PluginId, namespace: String },
 }
 
 /// Errors from `dx_invoke` host function calls.

@@ -23,6 +23,7 @@ use tokio::sync::{RwLock, broadcast, mpsc};
 
 use crate::error::{InvocationError, PersistenceError, PluginRuntimeError};
 use crate::host_functions::{self, CallCtx, make_host_functions};
+use crate::manifest_extension::{ManifestExtensionHandler, OnUnknownExtension};
 
 // ── State type aliases ───────────────────────────────────────────────────────
 
@@ -367,9 +368,29 @@ pub struct PluginRuntime {
     pub(crate) plugin_page_prefix: Option<String>,
     /// Sender half of the event dispatch channel; plugins call `dx_emit_event` → send here.
     pub(crate) event_tx: mpsc::UnboundedSender<(PluginEvent, SessionCtx)>,
+    /// Registered manifest extension handlers, keyed by namespace string.
+    pub(crate) extension_handlers: RwLock<HashMap<String, Arc<dyn ManifestExtensionHandler>>>,
+    /// Behaviour when a plugin declares an extension namespace with no registered handler.
+    pub(crate) on_unknown_extension: OnUnknownExtension,
 }
 
 impl PluginRuntime {
+    /// Register a handler for one manifest extension namespace.
+    ///
+    /// Affects plugins loaded **after** this call. Already-loaded plugins are not
+    /// retroactively notified. For startup-time registration prefer
+    /// [`PluginRuntimeBuilder::with_manifest_extension`].
+    pub async fn register_manifest_extension(
+        &self,
+        namespace: impl Into<String>,
+        handler: Arc<dyn ManifestExtensionHandler>,
+    ) {
+        self.extension_handlers
+            .write()
+            .await
+            .insert(namespace.into(), handler);
+    }
+
     /// Returns the cached `OverrideMap` without recomputation.
     pub async fn override_map(&self) -> OverrideMap {
         self.registries.read().await.override_map.clone()
@@ -1166,6 +1187,37 @@ impl PluginRuntime {
             }
         }
 
+        // Validate extensions before committing to pool build.
+        {
+            let handlers = self.extension_handlers.read().await;
+            for (ns, val) in &new_manifest.extensions {
+                match handlers.get(ns) {
+                    Some(handler) => handler
+                        .validate(&new_manifest.id, val)
+                        .map_err(|source| PluginRuntimeError::ManifestExtension {
+                            plugin: new_manifest.id.clone(),
+                            source,
+                        })?,
+                    None => match &self.on_unknown_extension {
+                        OnUnknownExtension::Warn => {
+                            tracing::warn!(
+                                plugin = ?new_manifest.id,
+                                namespace = %ns,
+                                "unknown manifest extension namespace"
+                            );
+                        }
+                        OnUnknownExtension::Error => {
+                            return Err(PluginRuntimeError::UnknownManifestExtension {
+                                plugin: new_manifest.id.clone(),
+                                namespace: ns.clone(),
+                            });
+                        }
+                        OnUnknownExtension::Ignore => {}
+                    },
+                }
+            }
+        } // handlers read lock released
+
         let new_ctx = CallCtx {
             caller: new_manifest.id.clone(),
             session_states,
@@ -1233,7 +1285,7 @@ impl PluginRuntime {
             .map_err(|e| PluginRuntimeError::TaskPanic(e.to_string()))??;
         }
 
-        // Step 2: call on_unload on the OLD pool outside the write lock — best effort.
+        // Step 2: call on_unload on the OLD pool and extension handlers — best effort.
         {
             let plugins = self.plugins.read().await;
             if let Some(old) = plugins.get(id) {
@@ -1250,10 +1302,21 @@ impl PluginRuntime {
                     })
                     .await;
                 }
+                // Extension handler on_unload — best effort.
+                let handlers = self.extension_handlers.read().await;
+                for (ns, _val) in &old.manifest.extensions {
+                    if let Some(handler) = handlers.get(ns) {
+                        if let Err(e) = handler.on_unload(id) {
+                            tracing::warn!(namespace = %ns, error = %e, "manifest extension on_unload failed");
+                        }
+                    }
+                }
             }
         }
 
         // Step 3: single write lock — swap, rebuild registries, bump version.
+        let new_extensions = new_manifest.extensions.clone();
+        let new_plugin_id = new_manifest.id.clone();
         let new_map = {
             let mut plugins = self.plugins.write().await;
             let mut regs = self.registries.write().await;
@@ -1272,7 +1335,28 @@ impl PluginRuntime {
             new_regs.override_map.version = regs.override_map.version + 1;
             *regs = new_regs;
             regs.override_map.clone()
-        };
+        }; // both locks released
+
+        // Extension handler on_load — after locks released. On error: remove plugin.
+        {
+            let handlers = self.extension_handlers.read().await;
+            let mut on_load_err: Option<PluginRuntimeError> = None;
+            for (ns, val) in &new_extensions {
+                if let Some(handler) = handlers.get(ns) {
+                    if let Err(source) = handler.on_load(&new_plugin_id, val) {
+                        on_load_err = Some(PluginRuntimeError::ManifestExtension {
+                            plugin: new_plugin_id.clone(),
+                            source,
+                        });
+                        break;
+                    }
+                }
+            }
+            if let Some(err) = on_load_err {
+                let _ = self.plugins.write().await.swap_remove(id);
+                return Err(err);
+            }
+        }
 
         // Step 4: broadcast after both locks are released.
         let _ = self.override_map_tx.send(new_map);
@@ -1303,6 +1387,15 @@ impl PluginRuntime {
                         }
                     })
                     .await;
+                }
+                // Extension handler on_unload — best effort.
+                let handlers = self.extension_handlers.read().await;
+                for (ns, _val) in &p.manifest.extensions {
+                    if let Some(handler) = handlers.get(ns) {
+                        if let Err(e) = handler.on_unload(id) {
+                            tracing::warn!(namespace = %ns, error = %e, "manifest extension on_unload failed");
+                        }
+                    }
                 }
             }
         }
@@ -1755,6 +1848,8 @@ pub struct PluginRuntimeBuilder {
     invocations: Vec<(String, InvocationHandler, Duration)>,
     persistence: Option<Arc<dyn StatePersistenceProvider>>,
     plugin_page_prefix: Option<String>,
+    extension_handlers: Vec<(String, Arc<dyn ManifestExtensionHandler>)>,
+    on_unknown_extension: OnUnknownExtension,
 }
 
 impl PluginRuntimeBuilder {
@@ -1824,6 +1919,30 @@ impl PluginRuntimeBuilder {
         self
     }
 
+    /// Register a manifest extension handler for a given namespace.
+    ///
+    /// Handlers registered here are applied to all plugins loaded during [`build`].
+    ///
+    /// [`build`]: PluginRuntimeBuilder::build
+    #[must_use]
+    pub fn with_manifest_extension(
+        mut self,
+        namespace: impl Into<String>,
+        handler: Arc<dyn ManifestExtensionHandler>,
+    ) -> Self {
+        self.extension_handlers.push((namespace.into(), handler));
+        self
+    }
+
+    /// Set the behaviour when a plugin declares an extension namespace with no registered handler.
+    ///
+    /// Default: [`OnUnknownExtension::Warn`].
+    #[must_use]
+    pub fn with_on_unknown_extension(mut self, policy: OnUnknownExtension) -> Self {
+        self.on_unknown_extension = policy;
+        self
+    }
+
     /// Provide a persistence backend for `GlobalScope` plugin state.
     #[must_use]
     pub fn with_state_persistence(mut self, provider: impl StatePersistenceProvider) -> Self {
@@ -1884,6 +2003,11 @@ impl PluginRuntimeBuilder {
 
         let (event_tx, event_rx) = mpsc::unbounded_channel::<(PluginEvent, SessionCtx)>();
 
+        // Build the extension handler map once, outside the plugin loop.
+        let extension_handlers: HashMap<String, Arc<dyn ManifestExtensionHandler>> =
+            self.extension_handlers.into_iter().collect();
+        let on_unknown_extension = self.on_unknown_extension;
+
         let mut all_plugins: IndexMap<PluginId, LoadedPlugin> = IndexMap::new();
 
         for (source, config) in self.sources {
@@ -1931,6 +2055,34 @@ impl PluginRuntimeBuilder {
                             .extend(keys.iter().cloned());
                     }
                     _ => {}
+                }
+            }
+
+            // Validate all manifest extensions before committing to pool build.
+            for (ns, val) in &plugin_manifest.extensions {
+                match extension_handlers.get(ns) {
+                    Some(handler) => handler
+                        .validate(&plugin_manifest.id, val)
+                        .map_err(|source| PluginRuntimeError::ManifestExtension {
+                            plugin: plugin_manifest.id.clone(),
+                            source,
+                        })?,
+                    None => match &on_unknown_extension {
+                        OnUnknownExtension::Warn => {
+                            tracing::warn!(
+                                plugin = ?plugin_manifest.id,
+                                namespace = %ns,
+                                "unknown manifest extension namespace"
+                            );
+                        }
+                        OnUnknownExtension::Error => {
+                            return Err(PluginRuntimeError::UnknownManifestExtension {
+                                plugin: plugin_manifest.id.clone(),
+                                namespace: ns.clone(),
+                            });
+                        }
+                        OnUnknownExtension::Ignore => {}
+                    },
                 }
             }
 
@@ -2010,8 +2162,10 @@ impl PluginRuntimeBuilder {
                 .map_err(|e| PluginRuntimeError::TaskPanic(e.to_string()))??;
             }
 
+            let plugin_id = plugin_manifest.id.clone();
+            let extensions = plugin_manifest.extensions.clone();
             all_plugins.insert(
-                plugin_manifest.id.clone(),
+                plugin_id.clone(),
                 LoadedPlugin {
                     manifest: plugin_manifest,
                     pool,
@@ -2020,6 +2174,24 @@ impl PluginRuntimeBuilder {
                     ctx_arc,
                 },
             );
+
+            // Notify handlers after insertion. On error: remove the plugin and fail.
+            let mut on_load_err: Option<PluginRuntimeError> = None;
+            for (ns, val) in &extensions {
+                if let Some(handler) = extension_handlers.get(ns) {
+                    if let Err(source) = handler.on_load(&plugin_id, val) {
+                        on_load_err = Some(PluginRuntimeError::ManifestExtension {
+                            plugin: plugin_id.clone(),
+                            source,
+                        });
+                        break;
+                    }
+                }
+            }
+            if let Some(err) = on_load_err {
+                all_plugins.swap_remove(&plugin_id);
+                return Err(err);
+            }
         }
 
         // Restore global state from persistence before returning.
@@ -2048,6 +2220,8 @@ impl PluginRuntimeBuilder {
             persistence: self.persistence,
             plugin_page_prefix: self.plugin_page_prefix,
             event_tx,
+            extension_handlers: RwLock::new(extension_handlers),
+            on_unknown_extension,
         });
 
         // Event dispatch task: receives plugin-emitted events and fans them out.
