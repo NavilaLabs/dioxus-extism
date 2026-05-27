@@ -1418,6 +1418,61 @@ impl PluginRuntime {
         Ok(())
     }
 
+    // ── Generic plugin-function dispatch (§2) ─────────────────────────────────
+
+    /// Call an arbitrary named export on a loaded plugin.
+    ///
+    /// This is the generic escape-hatch that lets hosts reach into a plugin for
+    /// domain-specific computations that do not fit any of the built-in call paths
+    /// (slots, hooks, transforms, events). The export must accept JSON-encoded `I`
+    /// and return JSON-encoded `O`.
+    ///
+    /// # Errors
+    /// Returns `PluginRuntimeError::PluginNotFound` if the plugin is not registered,
+    /// `PluginRuntimeError::PluginDisabled` if it is currently disabled,
+    /// or `PluginRuntimeError::CallFailed` if the WASM call itself fails.
+    pub async fn call_plugin<I, O>(
+        &self,
+        plugin_id: &PluginId,
+        function_name: impl Into<String>,
+        input: &I,
+        session: &SessionCtx,
+    ) -> Result<O, PluginRuntimeError>
+    where
+        I: Serialize,
+        O: DeserializeOwned + Send + 'static,
+    {
+        let pool = {
+            let plugins = self.plugins.read().await;
+            let plugin = plugins
+                .get(plugin_id)
+                .ok_or_else(|| PluginRuntimeError::PluginNotFound(plugin_id.clone()))?;
+            if !plugin.enabled.load(Ordering::Relaxed) {
+                return Err(PluginRuntimeError::PluginDisabled(plugin_id.clone()));
+            }
+            plugin.pool.clone()
+        };
+
+        // Serialize up front so the Value (Send + 'static) can cross the spawn_blocking boundary.
+        let input_value = serde_json::to_value(input)?;
+        let fn_name: String = function_name.into();
+        let session = session.clone();
+
+        tokio::task::spawn_blocking(move || -> Result<O, PluginRuntimeError> {
+            host_functions::set_call_session(session.session_id.clone(), session.client.clone());
+            let mut p = pool
+                .get(Duration::from_secs(5))
+                .map_err(|e| PluginRuntimeError::CallFailed { source: e })?
+                .ok_or_else(|| PluginRuntimeError::Pool("call_plugin: pool timeout".into()))?;
+            let Json(result) = p
+                .call::<Json<serde_json::Value>, Json<O>>(&fn_name, Json(input_value))
+                .map_err(|e| PluginRuntimeError::CallFailed { source: e })?;
+            Ok(result)
+        })
+        .await
+        .map_err(|e| PluginRuntimeError::TaskPanic(e.to_string()))?
+    }
+
     const fn is_compatible(plugin: &LoadedPlugin, client: &ClientCapabilities) -> bool {
         plugin.manifest.min_protocol_version <= client.protocol_version
             && plugin.manifest.min_app_version <= client.app_version
