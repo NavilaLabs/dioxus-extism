@@ -13,7 +13,7 @@ pub use dioxus_extism_protocol::RouteTransforms;
 pub use manifest_extension::{ManifestExtensionError, ManifestExtensionHandler, OnUnknownExtension};
 pub use persistence::JsonFilePersistence;
 pub use runtime::{
-    GlobalStateMap, HookOutcome, PluginInstallConfig, PluginRuntime, PluginRuntimeBuilder,
-    PluginRuntimeExt, PluginSource, SessionStateMap, StatePersistenceProvider, TransformEntry,
-    TransformRegistry,
+    CapabilityCheckFn, GlobalStateMap, HookOutcome, PluginInstallConfig, PluginRuntime,
+    PluginRuntimeBuilder, PluginRuntimeExt, PluginSource, SessionStateMap,
+    StatePersistenceProvider, TransformEntry, TransformRegistry,
 };

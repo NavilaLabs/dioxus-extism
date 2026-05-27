@@ -214,6 +214,16 @@ pub enum HostCapability {
     ReadPluginState { plugin_id: PluginId, keys: Vec<String> },
     /// Request permission to call named host-side invocations.
     Invoke { names: Vec<String> },
+    /// A host-defined capability class. The `namespace` identifies the type of
+    /// capability; `value` is opaque JSON interpreted entirely by the host's
+    /// registered [`CapabilityCheckFn`].
+    ///
+    /// If no check is registered for `namespace` at load time, the capability is
+    /// **denied** by default.
+    Custom {
+        namespace: String,
+        value: serde_json::Value,
+    },
 }
 
 // ── Selectors ────────────────────────────────────────────────────────────────

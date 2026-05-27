@@ -25,6 +25,18 @@ use crate::error::{InvocationError, PersistenceError, PluginRuntimeError};
 use crate::host_functions::{self, CallCtx, make_host_functions};
 use crate::manifest_extension::{ManifestExtensionHandler, OnUnknownExtension};
 
+// ── Capability check type ─────────────────────────────────────────────────────
+
+/// A host-provided check for a `HostCapability::Custom` namespace.
+///
+/// Receives the declaring plugin's [`PluginId`] and the opaque JSON `value` from
+/// its manifest. Return `Ok(())` to allow the capability, or `Err(reason)` to deny.
+///
+/// Register via [`PluginRuntimeBuilder::with_capability_check`] or
+/// [`PluginRuntime::register_capability_check`].
+pub type CapabilityCheckFn =
+    dyn Fn(&PluginId, &serde_json::Value) -> Result<(), String> + Send + Sync;
+
 // ── State type aliases ───────────────────────────────────────────────────────
 
 pub type PluginState = HashMap<String, serde_json::Value>;
@@ -372,6 +384,8 @@ pub struct PluginRuntime {
     pub(crate) extension_handlers: RwLock<HashMap<String, Arc<dyn ManifestExtensionHandler>>>,
     /// Behaviour when a plugin declares an extension namespace with no registered handler.
     pub(crate) on_unknown_extension: OnUnknownExtension,
+    /// Host-registered checks for `HostCapability::Custom` namespaces.
+    pub(crate) capability_checks: RwLock<HashMap<String, Arc<CapabilityCheckFn>>>,
 }
 
 impl PluginRuntime {
@@ -389,6 +403,68 @@ impl PluginRuntime {
             .write()
             .await
             .insert(namespace.into(), handler);
+    }
+
+    /// Register a check for a `HostCapability::Custom` namespace.
+    ///
+    /// Affects plugins loaded **after** this call. For startup-time registration
+    /// prefer [`PluginRuntimeBuilder::with_capability_check`].
+    pub async fn register_capability_check(
+        &self,
+        namespace: impl Into<String>,
+        check: Arc<CapabilityCheckFn>,
+    ) {
+        self.capability_checks
+            .write()
+            .await
+            .insert(namespace.into(), check);
+    }
+
+    /// Check whether `plugin_id` has declared a `Custom` capability for `namespace`
+    /// and whether the registered check passes.
+    ///
+    /// Returns `Ok(())` if the plugin declared the capability and the check passes.
+    /// Returns `Err(CapabilityDenied)` if:
+    /// - the plugin is not found,
+    /// - it never declared the capability for `namespace`,
+    /// - no check is registered for `namespace`, or
+    /// - the check returns an error.
+    pub async fn check_custom_capability(
+        &self,
+        plugin_id: &PluginId,
+        namespace: &str,
+    ) -> Result<(), PluginRuntimeError> {
+        let declared_value: serde_json::Value = {
+            let plugins = self.plugins.read().await;
+            let plugin = plugins
+                .get(plugin_id)
+                .ok_or_else(|| PluginRuntimeError::PluginNotFound(plugin_id.clone()))?;
+            plugin
+                .manifest
+                .host_capabilities
+                .iter()
+                .find_map(|cap| {
+                    if let HostCapability::Custom { namespace: ns, value } = cap {
+                        if ns == namespace { Some(value.clone()) } else { None }
+                    } else {
+                        None
+                    }
+                })
+                .ok_or_else(|| PluginRuntimeError::CapabilityDenied {
+                    plugin: plugin_id.clone(),
+                    capability: format!("Custom({namespace}): not declared in manifest"),
+                })?
+        };
+
+        let checks = self.capability_checks.read().await;
+        let check = checks.get(namespace).ok_or_else(|| PluginRuntimeError::CapabilityDenied {
+            plugin: plugin_id.clone(),
+            capability: format!("Custom({namespace}): no check registered"),
+        })?;
+        check(plugin_id, &declared_value).map_err(|reason| PluginRuntimeError::CapabilityDenied {
+            plugin: plugin_id.clone(),
+            capability: format!("Custom({namespace}): {reason}"),
+        })
     }
 
     /// Returns the cached `OverrideMap` without recomputation.
@@ -1183,6 +1259,21 @@ impl PluginRuntime {
                         .or_default()
                         .extend(keys.iter().cloned());
                 }
+                HostCapability::Custom { namespace, value } => {
+                    let checks = self.capability_checks.read().await;
+                    match checks.get(namespace) {
+                        None => return Err(PluginRuntimeError::CapabilityDenied {
+                            plugin: new_manifest.id.clone(),
+                            capability: format!("Custom({namespace}): no check registered"),
+                        }),
+                        Some(check) => check(&new_manifest.id, value).map_err(|reason| {
+                            PluginRuntimeError::CapabilityDenied {
+                                plugin: new_manifest.id.clone(),
+                                capability: format!("Custom({namespace}): {reason}"),
+                            }
+                        })?,
+                    }
+                }
                 _ => {}
             }
         }
@@ -1905,6 +1996,7 @@ pub struct PluginRuntimeBuilder {
     plugin_page_prefix: Option<String>,
     extension_handlers: Vec<(String, Arc<dyn ManifestExtensionHandler>)>,
     on_unknown_extension: OnUnknownExtension,
+    capability_checks: Vec<(String, Arc<CapabilityCheckFn>)>,
 }
 
 impl PluginRuntimeBuilder {
@@ -1998,6 +2090,20 @@ impl PluginRuntimeBuilder {
         self
     }
 
+    /// Register a check for a `HostCapability::Custom` namespace.
+    ///
+    /// Plugins that declare this namespace in their `host_capabilities` will have the
+    /// check called at load time. Deny by returning `Err(reason_string)`.
+    #[must_use]
+    pub fn with_capability_check(
+        mut self,
+        namespace: impl Into<String>,
+        check: Arc<CapabilityCheckFn>,
+    ) -> Self {
+        self.capability_checks.push((namespace.into(), check));
+        self
+    }
+
     /// Provide a persistence backend for `GlobalScope` plugin state.
     #[must_use]
     pub fn with_state_persistence(mut self, provider: impl StatePersistenceProvider) -> Self {
@@ -2062,6 +2168,8 @@ impl PluginRuntimeBuilder {
         let extension_handlers: HashMap<String, Arc<dyn ManifestExtensionHandler>> =
             self.extension_handlers.into_iter().collect();
         let on_unknown_extension = self.on_unknown_extension;
+        let capability_checks: HashMap<String, Arc<CapabilityCheckFn>> =
+            self.capability_checks.into_iter().collect();
 
         let mut all_plugins: IndexMap<PluginId, LoadedPlugin> = IndexMap::new();
 
@@ -2108,6 +2216,20 @@ impl PluginRuntimeBuilder {
                             .entry(plugin_id.clone())
                             .or_default()
                             .extend(keys.iter().cloned());
+                    }
+                    HostCapability::Custom { namespace, value } => {
+                        match capability_checks.get(namespace) {
+                            None => return Err(PluginRuntimeError::CapabilityDenied {
+                                plugin: plugin_manifest.id.clone(),
+                                capability: format!("Custom({namespace}): no check registered"),
+                            }),
+                            Some(check) => check(&plugin_manifest.id, value).map_err(|reason| {
+                                PluginRuntimeError::CapabilityDenied {
+                                    plugin: plugin_manifest.id.clone(),
+                                    capability: format!("Custom({namespace}): {reason}"),
+                                }
+                            })?,
+                        }
                     }
                     _ => {}
                 }
@@ -2277,6 +2399,7 @@ impl PluginRuntimeBuilder {
             event_tx,
             extension_handlers: RwLock::new(extension_handlers),
             on_unknown_extension,
+            capability_checks: RwLock::new(capability_checks),
         });
 
         // Event dispatch task: receives plugin-emitted events and fans them out.

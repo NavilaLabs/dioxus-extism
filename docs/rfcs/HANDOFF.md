@@ -35,7 +35,7 @@ Feature branch: `claude/admiring-goldberg-mijsy`.
 ## Recommended implementation order
 
 1. ~~**§1 Generic Manifest Extensions**~~ ✓ done
-2. **§2 Generic Plugin-Function Dispatch** — pair with §1; together they give hosts everything to wire custom WASM behavior.
+2. ~~**§2 Generic Plugin-Function Dispatch**~~ ✓ done
 3. **§3 Host-Defined Capability Classes** — extends the existing capability check pipeline.
 4. **§4 Route-Level `TransformOp::Replace`** — additive enum variant + resolver change in `PluginAwareRouter`.
 5. **§5 Opaque Trust Tag** — Ed25519 verification + `TrustTag` on `LoadedPlugin`.
