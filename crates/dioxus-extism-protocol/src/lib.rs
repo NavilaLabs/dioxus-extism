@@ -496,6 +496,49 @@ pub struct ViewUpdate {
     pub events: Vec<PluginEvent>,
 }
 
+// ── Call context ─────────────────────────────────────────────────────────────
+
+/// Combined per-call context handed to host callbacks at every runtime decision point.
+///
+/// `session` is populated by dioxus-extism and carries library-owned per-call metadata.
+/// `host` is populated by the host application and is fully opaque to dioxus-extism;
+/// the library never reads, serialises, logs, or compares `HostCtx` values.
+///
+/// Callbacks receive `&CallContext<HostCtx>`. The host can read both fields:
+///
+/// ```rust,ignore
+/// runtime.with_route_replace_policy_ctx(|plugin_id, route, ctx| {
+///     let session_id = &ctx.session.session_id;   // dioxus-extism-owned
+///     host_policy_decide(plugin_id, route, ctx.host) // host-owned
+/// });
+/// ```
+///
+/// `CallContext` is `#[non_exhaustive]` so future dioxus-extism-owned fields
+/// can be added without breaking host callbacks.
+#[non_exhaustive]
+pub struct CallContext<'a, HostCtx> {
+    /// dioxus-extism-owned per-call metadata (session id, client capabilities, caller plugin).
+    pub session: &'a SessionCtx,
+    /// Host-provided per-call context — opaque to dioxus-extism.
+    pub host: &'a HostCtx,
+}
+
+impl<'a, HostCtx> CallContext<'a, HostCtx> {
+    /// Construct a `CallContext` from its two constituent references.
+    pub fn new(session: &'a SessionCtx, host: &'a HostCtx) -> Self {
+        Self { session, host }
+    }
+}
+
+impl<'a, HostCtx: std::fmt::Debug> std::fmt::Debug for CallContext<'a, HostCtx> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("CallContext")
+            .field("session", self.session)
+            .field("host", self.host)
+            .finish()
+    }
+}
+
 // ── Session context and override map ────────────────────────────────────────
 
 /// Session and caller context threaded through every plugin call.
