@@ -42,7 +42,7 @@ fn echo_id() -> PluginId {
 
 #[tokio::test]
 async fn echo_fn_returns_input_unchanged() {
-    let runtime = PluginRuntimeBuilder::new()
+    let runtime = PluginRuntimeBuilder::<()>::new()
         .add_plugin(src(ECHO_FN_WASM))
         .build()
         .await
@@ -59,7 +59,7 @@ async fn echo_fn_returns_input_unchanged() {
 
 #[tokio::test]
 async fn compute_fn_returns_incremented_value() {
-    let runtime = PluginRuntimeBuilder::new()
+    let runtime = PluginRuntimeBuilder::<()>::new()
         .add_plugin(src(ECHO_FN_WASM))
         .build()
         .await
@@ -75,7 +75,7 @@ async fn compute_fn_returns_incremented_value() {
 
 #[tokio::test]
 async fn plugin_not_found_returns_error() {
-    let runtime = PluginRuntimeBuilder::new()
+    let runtime = PluginRuntimeBuilder::<()>::new()
         .build()
         .await
         .expect("empty build failed");
@@ -97,7 +97,7 @@ async fn plugin_not_found_returns_error() {
 
 #[tokio::test]
 async fn disabled_plugin_returns_error() {
-    let runtime = PluginRuntimeBuilder::new()
+    let runtime = PluginRuntimeBuilder::<()>::new()
         .add_plugin(src(ECHO_FN_WASM))
         .build()
         .await
@@ -117,7 +117,7 @@ async fn disabled_plugin_returns_error() {
 
 #[tokio::test]
 async fn unknown_export_returns_call_failed() {
-    let runtime = PluginRuntimeBuilder::new()
+    let runtime = PluginRuntimeBuilder::<()>::new()
         .add_plugin(src(ECHO_FN_WASM))
         .build()
         .await
@@ -141,7 +141,7 @@ async fn struct_input_round_trips_via_serde() {
         count: u32,
     }
 
-    let runtime = PluginRuntimeBuilder::new()
+    let runtime = PluginRuntimeBuilder::<()>::new()
         .add_plugin(src(ECHO_FN_WASM))
         .build()
         .await
@@ -159,7 +159,7 @@ async fn struct_input_round_trips_via_serde() {
 #[tokio::test]
 async fn concurrent_calls_all_succeed() {
     let runtime = Arc::new(
-        PluginRuntimeBuilder::new()
+        PluginRuntimeBuilder::<()>::new()
             .add_plugin(src(ECHO_FN_WASM))
             .build()
             .await

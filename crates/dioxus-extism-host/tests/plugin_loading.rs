@@ -23,7 +23,7 @@ fn test_session() -> SessionCtx {
 
 #[tokio::test]
 async fn loads_plugin_and_reads_manifest() {
-    let runtime = PluginRuntimeBuilder::new()
+    let runtime = PluginRuntimeBuilder::<()>::new()
         .add_plugin(PluginSource::Bytes(HELLO_WASM.into()))
         .build()
         .await
@@ -39,7 +39,7 @@ async fn loads_plugin_and_reads_manifest() {
 
 #[tokio::test]
 async fn plugin_appears_in_slot_registry() {
-    let runtime = PluginRuntimeBuilder::new()
+    let runtime = PluginRuntimeBuilder::<()>::new()
         .add_plugin(PluginSource::Bytes(HELLO_WASM.into()))
         .build()
         .await
@@ -61,7 +61,7 @@ async fn plugin_appears_in_slot_registry() {
 
 #[tokio::test]
 async fn slot_render_returns_plugin_view() {
-    let runtime = PluginRuntimeBuilder::new()
+    let runtime = PluginRuntimeBuilder::<()>::new()
         .add_plugin(PluginSource::Bytes(HELLO_WASM.into()))
         .build()
         .await
@@ -84,7 +84,7 @@ async fn slot_render_returns_plugin_view() {
 
 #[tokio::test]
 async fn unknown_slot_returns_empty() {
-    let runtime = PluginRuntimeBuilder::new()
+    let runtime = PluginRuntimeBuilder::<()>::new()
         .add_plugin(PluginSource::Bytes(HELLO_WASM.into()))
         .build()
         .await
@@ -112,7 +112,7 @@ async fn hook_with_no_handlers_passes_through() {
         value: i32,
     }
 
-    let runtime = PluginRuntimeBuilder::new()
+    let runtime = PluginRuntimeBuilder::<()>::new()
         .build()
         .await
         .expect("build failed");

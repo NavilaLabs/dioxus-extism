@@ -47,12 +47,29 @@ pub type RouteReplacePolicyFn<HostCtx = ()> =
 
 /// A host-provided check for a `HostCapability::Custom` namespace.
 ///
-/// Receives the declaring plugin's [`PluginId`] and the opaque JSON `value` from
-/// its manifest. Return `Ok(())` to allow the capability, or `Err(reason)` to deny.
+/// Receives the declaring plugin's [`PluginId`], the opaque JSON `value` from
+/// its manifest, and the combined per-call [`CallContext`].
+/// Return `Ok(())` to allow the capability, or `Err(reason)` to deny.
 ///
-/// Register via [`PluginRuntimeBuilder::with_capability_check`] or
+/// The two-argument legacy form (discards context) is available via
+/// [`PluginRuntimeBuilder::with_capability_check`] and
 /// [`PluginRuntime::register_capability_check`].
-pub type CapabilityCheckFn =
+///
+/// The context-aware form is available via
+/// [`PluginRuntimeBuilder::with_capability_check_ctx`] and
+/// [`PluginRuntime::register_capability_check_ctx`].
+pub type CapabilityCheckFn<HostCtx = ()> =
+    dyn Fn(&PluginId, &serde_json::Value, &CallContext<'_, HostCtx>) -> Result<(), String>
+        + Send
+        + Sync;
+
+/// Two-argument capability check used only at plugin load time (build/install/reload).
+///
+/// Load-time checks run without a per-call context — see RFC §3.3. Only checks registered
+/// via [`PluginRuntimeBuilder::with_capability_check`] (or `register_capability_check`)
+/// participate in load-time gating; checks registered via the `_ctx` variants are
+/// runtime-only and do not block plugin loading.
+type LoadTimeCapabilityCheckFn =
     dyn Fn(&PluginId, &serde_json::Value) -> Result<(), String> + Send + Sync;
 
 // ── Observability ─────────────────────────────────────────────────────────────
@@ -469,8 +486,11 @@ pub struct PluginRuntime<HostCtx = ()> {
     pub(crate) extension_handlers: RwLock<HashMap<String, Arc<dyn ManifestExtensionHandler>>>,
     /// Behaviour when a plugin declares an extension namespace with no registered handler.
     pub(crate) on_unknown_extension: OnUnknownExtension,
-    /// Host-registered checks for `HostCapability::Custom` namespaces.
-    pub(crate) capability_checks: RwLock<HashMap<String, Arc<CapabilityCheckFn>>>,
+    /// Runtime checks for `HostCapability::Custom` namespaces (per-call, context-aware).
+    pub(crate) capability_checks: RwLock<HashMap<String, Arc<CapabilityCheckFn<HostCtx>>>>,
+    /// Load-time checks (2-arg, no `HostCtx`) for `HostCapability::Custom` namespaces.
+    /// Used by `build`, `install`, and `reload_plugin` — RFC §3.3 excludes lifecycle from `HostCtx`.
+    pub(crate) load_time_capability_checks: RwLock<HashMap<String, Arc<LoadTimeCapabilityCheckFn>>>,
     /// Optional host policy for `TransformOp::RouteReplace`. `None` means allow all.
     pub(crate) route_replace_policy: RwLock<Option<Arc<RouteReplacePolicyFn<HostCtx>>>>,
     /// Ed25519 public keys used to verify plugin signatures at load time.
@@ -545,23 +565,56 @@ impl<HostCtx> PluginRuntime<HostCtx> {
         *self.route_replace_policy.write().await = Some(Arc::new(policy));
     }
 
-    /// Register a check for a `HostCapability::Custom` namespace.
+    /// Register a check for a `HostCapability::Custom` namespace using the two-argument legacy
+    /// form (no [`CallContext`]).
     ///
-    /// Affects plugins loaded **after** this call. For startup-time registration
-    /// prefer [`PluginRuntimeBuilder::with_capability_check`].
+    /// The check runs at **both** plugin load time (install/reload) and at
+    /// [`check_custom_capability`] call time. Use [`register_capability_check_ctx`] when you
+    /// need the per-call context.
+    ///
+    /// For startup-time registration prefer [`PluginRuntimeBuilder::with_capability_check`].
+    ///
+    /// [`check_custom_capability`]: Self::check_custom_capability
+    /// [`register_capability_check_ctx`]: Self::register_capability_check_ctx
     pub async fn register_capability_check(
         &self,
         namespace: impl Into<String>,
-        check: Arc<CapabilityCheckFn>,
+        check: impl Fn(&PluginId, &serde_json::Value) -> Result<(), String> + Send + Sync + 'static,
     ) {
+        let ns: String = namespace.into();
+        let check_arc: Arc<LoadTimeCapabilityCheckFn> = Arc::new(check);
+        let check_clone = Arc::clone(&check_arc);
+        self.load_time_capability_checks.write().await.insert(ns.clone(), check_arc);
         self.capability_checks
             .write()
             .await
-            .insert(namespace.into(), check);
+            .insert(ns, Arc::new(move |id, val, _ctx| check_clone(id, val)));
+    }
+
+    /// Register a check for a `HostCapability::Custom` namespace that receives the full
+    /// [`CallContext`].
+    ///
+    /// The check runs only at [`check_custom_capability`] call time — **not** at plugin load
+    /// time. Load-time gating requires a 2-arg check registered via [`register_capability_check`].
+    ///
+    /// For startup-time registration prefer [`PluginRuntimeBuilder::with_capability_check_ctx`].
+    ///
+    /// [`check_custom_capability`]: Self::check_custom_capability
+    /// [`register_capability_check`]: Self::register_capability_check
+    pub async fn register_capability_check_ctx(
+        &self,
+        namespace: impl Into<String>,
+        check: impl Fn(&PluginId, &serde_json::Value, &CallContext<'_, HostCtx>)
+                -> Result<(), String>
+            + Send
+            + Sync
+            + 'static,
+    ) {
+        self.capability_checks.write().await.insert(namespace.into(), Arc::new(check));
     }
 
     /// Check whether `plugin_id` has declared a `Custom` capability for `namespace`
-    /// and whether the registered check passes.
+    /// and whether the registered check passes for this call.
     ///
     /// Returns `Ok(())` if the plugin declared the capability and the check passes.
     /// Returns `Err(CapabilityDenied)` if:
@@ -573,6 +626,8 @@ impl<HostCtx> PluginRuntime<HostCtx> {
         &self,
         plugin_id: &PluginId,
         namespace: &str,
+        session: &SessionCtx,
+        host_ctx: &HostCtx,
     ) -> Result<(), PluginRuntimeError> {
         let declared_value: serde_json::Value = {
             let plugins = self.plugins.read().await;
@@ -601,9 +656,12 @@ impl<HostCtx> PluginRuntime<HostCtx> {
             plugin: plugin_id.clone(),
             capability: format!("Custom({namespace}): no check registered"),
         })?;
-        check(plugin_id, &declared_value).map_err(|reason| PluginRuntimeError::CapabilityDenied {
-            plugin: plugin_id.clone(),
-            capability: format!("Custom({namespace}): {reason}"),
+        let call_ctx = CallContext::new(session, host_ctx);
+        check(plugin_id, &declared_value, &call_ctx).map_err(|reason| {
+            PluginRuntimeError::CapabilityDenied {
+                plugin: plugin_id.clone(),
+                capability: format!("Custom({namespace}): {reason}"),
+            }
         })
     }
 
@@ -1511,12 +1569,18 @@ impl<HostCtx> PluginRuntime<HostCtx> {
                         .extend(keys.iter().cloned());
                 }
                 HostCapability::Custom { namespace, value } => {
-                    let checks = self.capability_checks.read().await;
-                    match checks.get(namespace) {
-                        None => return Err(PluginRuntimeError::CapabilityDenied {
-                            plugin: new_manifest.id.clone(),
-                            capability: format!("Custom({namespace}): no check registered"),
-                        }),
+                    let lt_checks = self.load_time_capability_checks.read().await;
+                    match lt_checks.get(namespace) {
+                        None => {
+                            // Allow if a runtime ctx-check is registered; deny if nothing is.
+                            let rt_checks = self.capability_checks.read().await;
+                            if !rt_checks.contains_key(namespace) {
+                                return Err(PluginRuntimeError::CapabilityDenied {
+                                    plugin: new_manifest.id.clone(),
+                                    capability: format!("Custom({namespace}): no check registered"),
+                                });
+                            }
+                        }
                         Some(check) => check(&new_manifest.id, value).map_err(|reason| {
                             PluginRuntimeError::CapabilityDenied {
                                 plugin: new_manifest.id.clone(),
@@ -1866,12 +1930,17 @@ impl<HostCtx> PluginRuntime<HostCtx> {
                         .extend(keys.iter().cloned());
                 }
                 HostCapability::Custom { namespace, value } => {
-                    let checks = self.capability_checks.read().await;
-                    match checks.get(namespace) {
-                        None => return Err(PluginRuntimeError::CapabilityDenied {
-                            plugin: manifest.id.clone(),
-                            capability: format!("Custom({namespace}): no check registered"),
-                        }),
+                    let lt_checks = self.load_time_capability_checks.read().await;
+                    match lt_checks.get(namespace) {
+                        None => {
+                            let rt_checks = self.capability_checks.read().await;
+                            if !rt_checks.contains_key(namespace) {
+                                return Err(PluginRuntimeError::CapabilityDenied {
+                                    plugin: manifest.id.clone(),
+                                    capability: format!("Custom({namespace}): no check registered"),
+                                });
+                            }
+                        }
                         Some(check) => check(&manifest.id, value).map_err(|reason| {
                             PluginRuntimeError::CapabilityDenied {
                                 plugin: manifest.id.clone(),
@@ -2643,7 +2712,8 @@ pub struct PluginRuntimeBuilder<HostCtx = ()> {
     plugin_page_prefix: Option<String>,
     extension_handlers: Vec<(String, Arc<dyn ManifestExtensionHandler>)>,
     on_unknown_extension: OnUnknownExtension,
-    capability_checks: Vec<(String, Arc<CapabilityCheckFn>)>,
+    capability_checks: Vec<(String, Arc<CapabilityCheckFn<HostCtx>>)>,
+    load_time_capability_checks: Vec<(String, Arc<LoadTimeCapabilityCheckFn>)>,
     route_replace_policy: Option<Arc<RouteReplacePolicyFn<HostCtx>>>,
     trust_keys: Vec<TrustKey>,
     require_signature: bool,
@@ -2664,6 +2734,7 @@ impl<HostCtx> Default for PluginRuntimeBuilder<HostCtx> {
             extension_handlers: Vec::new(),
             on_unknown_extension: OnUnknownExtension::default(),
             capability_checks: Vec::new(),
+            load_time_capability_checks: Vec::new(),
             route_replace_policy: None,
             trust_keys: Vec::new(),
             require_signature: false,
@@ -2763,17 +2834,46 @@ impl<HostCtx> PluginRuntimeBuilder<HostCtx> {
         self
     }
 
-    /// Register a check for a `HostCapability::Custom` namespace.
+    /// Register a check for a `HostCapability::Custom` namespace using the two-argument legacy
+    /// form (no [`CallContext`]).
     ///
-    /// Plugins that declare this namespace in their `host_capabilities` will have the
-    /// check called at load time. Deny by returning `Err(reason_string)`.
+    /// The check runs at **both** plugin load time and at [`PluginRuntime::check_custom_capability`]
+    /// call time. Use [`with_capability_check_ctx`] when you need the per-call context.
+    ///
+    /// [`with_capability_check_ctx`]: Self::with_capability_check_ctx
     #[must_use]
     pub fn with_capability_check(
         mut self,
         namespace: impl Into<String>,
-        check: Arc<CapabilityCheckFn>,
+        check: impl Fn(&PluginId, &serde_json::Value) -> Result<(), String> + Send + Sync + 'static,
     ) -> Self {
-        self.capability_checks.push((namespace.into(), check));
+        let ns: String = namespace.into();
+        let check_arc: Arc<LoadTimeCapabilityCheckFn> = Arc::new(check);
+        let check_clone = Arc::clone(&check_arc);
+        self.load_time_capability_checks.push((ns.clone(), check_arc));
+        self.capability_checks.push((ns, Arc::new(move |id, val, _ctx| check_clone(id, val))));
+        self
+    }
+
+    /// Register a check for a `HostCapability::Custom` namespace that receives the full
+    /// [`CallContext`].
+    ///
+    /// The check runs only at [`PluginRuntime::check_custom_capability`] call time —
+    /// **not** at plugin load time. To also gate plugin loading, additionally register
+    /// a 2-arg check via [`with_capability_check`].
+    ///
+    /// [`with_capability_check`]: Self::with_capability_check
+    #[must_use]
+    pub fn with_capability_check_ctx(
+        mut self,
+        namespace: impl Into<String>,
+        check: impl Fn(&PluginId, &serde_json::Value, &CallContext<'_, HostCtx>)
+                -> Result<(), String>
+            + Send
+            + Sync
+            + 'static,
+    ) -> Self {
+        self.capability_checks.push((namespace.into(), Arc::new(check)));
         self
     }
 
@@ -2903,8 +3003,10 @@ impl<HostCtx> PluginRuntimeBuilder<HostCtx> {
         let extension_handlers: HashMap<String, Arc<dyn ManifestExtensionHandler>> =
             self.extension_handlers.into_iter().collect();
         let on_unknown_extension = self.on_unknown_extension;
-        let capability_checks: HashMap<String, Arc<CapabilityCheckFn>> =
+        let capability_checks: HashMap<String, Arc<CapabilityCheckFn<HostCtx>>> =
             self.capability_checks.into_iter().collect();
+        let load_time_capability_checks: HashMap<String, Arc<LoadTimeCapabilityCheckFn>> =
+            self.load_time_capability_checks.into_iter().collect();
         let trust_keys = self.trust_keys;
         let require_signature = self.require_signature;
 
@@ -2955,11 +3057,15 @@ impl<HostCtx> PluginRuntimeBuilder<HostCtx> {
                             .extend(keys.iter().cloned());
                     }
                     HostCapability::Custom { namespace, value } => {
-                        match capability_checks.get(namespace) {
-                            None => return Err(PluginRuntimeError::CapabilityDenied {
-                                plugin: plugin_manifest.id.clone(),
-                                capability: format!("Custom({namespace}): no check registered"),
-                            }),
+                        match load_time_capability_checks.get(namespace) {
+                            None => {
+                                if !capability_checks.contains_key(namespace) {
+                                    return Err(PluginRuntimeError::CapabilityDenied {
+                                        plugin: plugin_manifest.id.clone(),
+                                        capability: format!("Custom({namespace}): no check registered"),
+                                    });
+                                }
+                            }
                             Some(check) => check(&plugin_manifest.id, value).map_err(|reason| {
                                 PluginRuntimeError::CapabilityDenied {
                                     plugin: plugin_manifest.id.clone(),
@@ -3152,6 +3258,7 @@ impl<HostCtx> PluginRuntimeBuilder<HostCtx> {
             extension_handlers: RwLock::new(extension_handlers),
             on_unknown_extension,
             capability_checks: RwLock::new(capability_checks),
+            load_time_capability_checks: RwLock::new(load_time_capability_checks),
             route_replace_policy: RwLock::new(self.route_replace_policy),
             trust_keys,
             require_signature,

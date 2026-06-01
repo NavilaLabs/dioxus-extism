@@ -9,7 +9,7 @@ use dioxus_extism_host::{
     ManifestExtensionError, ManifestExtensionHandler, PluginInstallConfig, PluginRuntimeBuilder,
     PluginRuntimeError, PluginSource,
 };
-use dioxus_extism_protocol::PluginId;
+use dioxus_extism_protocol::{ClientCapabilities, PluginId, SessionCtx, SessionId, PROTOCOL_VERSION};
 
 macro_rules! fixture {
     ($name:ident, $path:literal) => {
@@ -26,26 +26,40 @@ fn src(bytes: &'static [u8]) -> PluginSource {
     PluginSource::Bytes(std::borrow::Cow::Borrowed(bytes))
 }
 
+fn test_session() -> SessionCtx {
+    SessionCtx {
+        session_id: SessionId("test".into()),
+        user_id: None,
+        client: ClientCapabilities {
+            protocol_version: PROTOCOL_VERSION,
+            app_version: 0,
+            registered_host_components: vec![],
+        },
+        caller: None,
+    }
+}
+
 #[tokio::test]
 async fn capability_allowed_when_check_returns_ok() {
-    let runtime = PluginRuntimeBuilder::new()
+    let runtime = PluginRuntimeBuilder::<()>::new()
         .add_plugin(src(WITH_EXTENSION_WASM))
-        .with_capability_check("test.cap-a", Arc::new(|_, _| Ok(())))
+        .with_capability_check("test.cap-a", |_, _| Ok(()))
         .with_on_unknown_extension(dioxus_extism_host::OnUnknownExtension::Ignore)
         .build()
         .await
         .expect("build failed");
 
     let id = PluginId("test/with-extension".into());
-    let result = runtime.check_custom_capability(&id, "test.cap-a").await;
+    let session = test_session();
+    let result = runtime.check_custom_capability(&id, "test.cap-a", &session, &()).await;
     assert!(result.is_ok(), "check should pass when declared and check returns Ok");
 }
 
 #[tokio::test]
 async fn capability_denied_at_build_when_check_returns_err() {
-    let result = PluginRuntimeBuilder::new()
+    let result = PluginRuntimeBuilder::<()>::new()
         .add_plugin(src(WITH_EXTENSION_WASM))
-        .with_capability_check("test.cap-a", Arc::new(|_, _| Err("tier too low".into())))
+        .with_capability_check("test.cap-a", |_, _| Err("tier too low".into()))
         .with_on_unknown_extension(dioxus_extism_host::OnUnknownExtension::Ignore)
         .build()
         .await;
@@ -60,7 +74,7 @@ async fn capability_denied_at_build_when_check_returns_err() {
 async fn capability_denied_when_no_check_registered() {
     // fixture-with-extension declares HostCapability::Custom { "test.cap-a", ... }
     // Without a registered check, the default policy is deny.
-    let result = PluginRuntimeBuilder::new()
+    let result = PluginRuntimeBuilder::<()>::new()
         .add_plugin(src(WITH_EXTENSION_WASM))
         .with_on_unknown_extension(dioxus_extism_host::OnUnknownExtension::Ignore)
         .build()
@@ -77,14 +91,14 @@ async fn check_function_receives_correct_value() {
     let captured: Arc<Mutex<Option<serde_json::Value>>> = Arc::new(Mutex::new(None));
     let captured_clone = Arc::clone(&captured);
 
-    let runtime = PluginRuntimeBuilder::new()
+    let runtime = PluginRuntimeBuilder::<()>::new()
         .add_plugin(src(WITH_EXTENSION_WASM))
         .with_capability_check(
             "test.cap-a",
-            Arc::new(move |_, value: &serde_json::Value| {
+            move |_, value: &serde_json::Value| {
                 *captured_clone.lock().unwrap() = Some(value.clone());
                 Ok(())
-            }),
+            },
         )
         .with_on_unknown_extension(dioxus_extism_host::OnUnknownExtension::Ignore)
         .build()
@@ -102,13 +116,14 @@ async fn check_function_receives_correct_value() {
 
 #[tokio::test]
 async fn check_custom_capability_plugin_not_found() {
-    let runtime = PluginRuntimeBuilder::new()
+    let runtime = PluginRuntimeBuilder::<()>::new()
         .build()
         .await
         .expect("build failed");
 
+    let session = test_session();
     let result = runtime
-        .check_custom_capability(&PluginId("ghost/plugin".into()), "test.cap-a")
+        .check_custom_capability(&PluginId("ghost/plugin".into()), "test.cap-a", &session, &())
         .await;
 
     assert!(
@@ -119,7 +134,7 @@ async fn check_custom_capability_plugin_not_found() {
 
 #[tokio::test]
 async fn register_check_at_runtime_then_install() {
-    let runtime = PluginRuntimeBuilder::new()
+    let runtime = PluginRuntimeBuilder::<()>::new()
         .build()
         .await
         .expect("build failed");
@@ -130,10 +145,10 @@ async fn register_check_at_runtime_then_install() {
     runtime
         .register_capability_check(
             "test.cap-a",
-            Arc::new(move |_, _| {
+            move |_, _| {
                 *called_clone.lock().unwrap() = true;
                 Ok(())
-            }),
+            },
         )
         .await;
 

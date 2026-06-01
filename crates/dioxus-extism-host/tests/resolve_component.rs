@@ -16,7 +16,7 @@ fn test_session() -> SessionCtx {
 
 #[tokio::test]
 async fn resolve_component_returns_none_for_unknown() {
-    let runtime = PluginRuntimeBuilder::new()
+    let runtime = PluginRuntimeBuilder::<()>::new()
         .build()
         .await
         .expect("runtime build failed");

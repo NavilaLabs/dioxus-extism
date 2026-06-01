@@ -75,7 +75,7 @@ impl RuntimeMetrics for CapturingMetrics {
 #[tokio::test]
 async fn record_call_invoked_after_slot_render() {
     let m = CapturingMetrics::default();
-    let runtime = PluginRuntimeBuilder::new()
+    let runtime = PluginRuntimeBuilder::<()>::new()
         .add_plugin(src(SLOT_NORMAL_WASM))
         .with_metrics(m.clone())
         .build()
@@ -96,7 +96,7 @@ async fn record_call_invoked_after_slot_render() {
 #[tokio::test]
 async fn record_call_success_false_on_slot_failure() {
     let m = CapturingMetrics::default();
-    let runtime = PluginRuntimeBuilder::new()
+    let runtime = PluginRuntimeBuilder::<()>::new()
         .add_plugin(src(SLOT_FAILING_WASM))
         .with_metrics(m.clone())
         .build()
@@ -119,7 +119,7 @@ async fn record_call_success_false_on_slot_failure() {
 #[tokio::test]
 async fn record_pool_utilization_invoked() {
     let m = CapturingMetrics::default();
-    let runtime = PluginRuntimeBuilder::new()
+    let runtime = PluginRuntimeBuilder::<()>::new()
         .add_plugin(src(SLOT_NORMAL_WASM))
         .with_metrics(m.clone())
         .build()
@@ -137,7 +137,7 @@ async fn record_pool_utilization_invoked() {
 #[tokio::test]
 async fn active_never_exceeds_pool_size() {
     let m = CapturingMetrics::default();
-    let runtime = PluginRuntimeBuilder::new()
+    let runtime = PluginRuntimeBuilder::<()>::new()
         .add_plugin(src(SLOT_NORMAL_WASM))
         .with_metrics(m.clone())
         .build()
@@ -158,7 +158,7 @@ async fn active_never_exceeds_pool_size() {
 
 #[tokio::test]
 async fn no_panic_without_metrics_provider() {
-    let runtime = PluginRuntimeBuilder::new()
+    let runtime = PluginRuntimeBuilder::<()>::new()
         .add_plugin(src(SLOT_NORMAL_WASM))
         .build()
         .await
@@ -172,7 +172,7 @@ async fn no_panic_without_metrics_provider() {
 #[tokio::test]
 async fn record_call_for_call_plugin() {
     let m = CapturingMetrics::default();
-    let runtime = PluginRuntimeBuilder::new()
+    let runtime = PluginRuntimeBuilder::<()>::new()
         .add_plugin(src(ECHO_FN_WASM))
         .with_metrics(m.clone())
         .build()
@@ -195,7 +195,7 @@ async fn record_call_for_call_plugin() {
 #[tokio::test]
 async fn elapsed_duration_is_plausible() {
     let m = CapturingMetrics::default();
-    let runtime = PluginRuntimeBuilder::new()
+    let runtime = PluginRuntimeBuilder::<()>::new()
         .add_plugin(src(SLOT_NORMAL_WASM))
         .with_metrics(m.clone())
         .build()
@@ -217,7 +217,7 @@ async fn elapsed_duration_is_plausible() {
 #[tokio::test]
 async fn metrics_called_for_each_plugin_in_multi_plugin_slot() {
     let m = CapturingMetrics::default();
-    let runtime = PluginRuntimeBuilder::new()
+    let runtime = PluginRuntimeBuilder::<()>::new()
         .add_plugin(src(SLOT_NORMAL_WASM))
         .add_plugin(src(SLOT_HIGH_WASM))
         .with_metrics(m.clone())
