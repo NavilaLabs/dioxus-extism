@@ -80,7 +80,7 @@ fn App() -> Element {
 #[component]
 fn Layout() -> Element {
     rsx! {
-        PluginAwareRouter::<Route> {}
+        PluginAwareRouter::<Route, ()> {}
     }
 }
 

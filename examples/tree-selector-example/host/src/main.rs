@@ -85,7 +85,7 @@ fn FeedPage() -> Element {
             h1 { "Tree Selector Example" }
             p { "The activity feed below is composed from two plugins with zero host involvement." }
             p { "plugin_a provides the feed card. plugin_b injects a Share button inside it." }
-            PluginSlot { name: "activity-feed" }
+            PluginSlot::<()> { name: "activity-feed" }
         }
     }
 }

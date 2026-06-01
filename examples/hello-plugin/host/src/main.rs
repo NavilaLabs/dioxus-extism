@@ -60,7 +60,7 @@ fn App() -> Element {
             PluginBootProvider {
                 div {
                     h1 { "Hello Plugin Example" }
-                    PluginSlot { name: "hello-slot" }
+                    PluginSlot::<()> { name: "hello-slot" }
                 }
             }
         }

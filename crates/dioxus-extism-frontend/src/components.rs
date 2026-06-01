@@ -1,4 +1,6 @@
 use std::collections::HashMap;
+use std::marker::PhantomData;
+use std::sync::Arc;
 
 use dioxus::prelude::*;
 use dioxus_extism_protocol::{
@@ -115,12 +117,22 @@ fn use_context_or_default<T: 'static + Clone + Default>() -> T {
 // ── PluginSlot ────────────────────────────────────────────────────────────────
 
 /// Renders plugin contributions to a named slot.
+///
+/// Generic over `HostCtx`: the host installs `Arc<HostCtx>` in the Dioxus
+/// context tree via `use_context_provider`; this component reads it with
+/// `try_use_context`.  For `HostCtx = ()` no provider is needed.
 #[component]
-pub fn PluginSlot(
+pub fn PluginSlot<HostCtx: 'static>(
     name: String,
     #[props(default)] loading: Option<Element>,
     #[props(default)] fallback: Option<Element>,
+    /// Marker that anchors the `HostCtx` generic to the Props struct.
+    /// Hosts provide `Arc<HostCtx>` via `use_context_provider`; this field is
+    /// never read by callers — it defaults to `PhantomData`.
+    #[props(default)]
+    _host_ctx_ty: PhantomData<Arc<HostCtx>>,
 ) -> Element {
+    let _host_ctx = try_use_context::<Arc<HostCtx>>();
     let session_id = use_session_id();
     let client_caps = use_context::<ClientCapabilities>();
 
@@ -157,12 +169,21 @@ pub fn PluginSlot(
 /// Fast path: if the `OverrideMap` (provided by `PluginBootProvider`) does not list
 /// `name` in `overridden_components`, `fallback` renders immediately with zero network
 /// overhead. No `use_resource` call and no server function invocation occur.
+///
+/// Generic over `HostCtx`: the host installs `Arc<HostCtx>` in the Dioxus
+/// context tree via `use_context_provider`; this component reads it with
+/// `try_use_context`.  For `HostCtx = ()` no provider is needed.
 #[component]
-pub fn OverridableComponent(
+pub fn OverridableComponent<HostCtx: 'static>(
     name: String,
     props: serde_json::Value,
     fallback: Element,
+    /// Marker that anchors the `HostCtx` generic to the Props struct.
+    /// Defaults to `PhantomData`; hosts supply `Arc<HostCtx>` via context.
+    #[props(default)]
+    _host_ctx_ty: PhantomData<Arc<HostCtx>>,
 ) -> Element {
+    let _host_ctx = try_use_context::<Arc<HostCtx>>();
     let override_map: Signal<OverrideMap> = use_context::<Signal<OverrideMap>>();
     if !override_map.read().overridden_components.contains(&name) {
         return fallback;
@@ -249,11 +270,16 @@ pub fn use_current_path() -> String {
 /// `Outlet<R>` renders directly without any server call.
 /// If patterns match, `PluginAwareRouterInner` issues a server call and applies
 /// before/wrap/after views.
+///
+/// Generic over `HostCtx`: the host installs `Arc<HostCtx>` in the Dioxus
+/// context tree via `use_context_provider`; this component reads it with
+/// `try_use_context`.  For `HostCtx = ()` no provider is needed.
 #[component]
-pub fn PluginAwareRouter<R: Routable + Clone>() -> Element
+pub fn PluginAwareRouter<R: Routable + Clone, HostCtx: 'static>() -> Element
 where
     <R as std::str::FromStr>::Err: std::fmt::Display,
 {
+    let _host_ctx = try_use_context::<Arc<HostCtx>>();
     let path = use_current_path();
     let override_map: Signal<OverrideMap> = use_context::<Signal<OverrideMap>>();
     let has_transforms = override_map.read().route_patterns.iter().any(|p| p.matches(&path));

@@ -261,7 +261,7 @@ enum Route {
 /// ancestor `Router<Route>` in the component tree — this layout provides that.
 #[component]
 fn AppLayout() -> Element {
-    rsx! { PluginAwareRouter::<Route> {} }
+    rsx! { PluginAwareRouter::<Route, ()> {} }
 }
 
 #[component]

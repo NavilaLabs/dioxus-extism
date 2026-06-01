@@ -13,3 +13,11 @@ pub use session::{DesktopSessionProvider, SessionProviderRoot, WebSessionProvide
 pub use session::MobileSessionProvider;
 
 pub use dioxus_extism_protocol::{RouteTransforms, PROTOCOL_VERSION};
+
+/// Convenience alias: the type hosts pass to `use_context_provider` so that
+/// `PluginSlot`, `OverridableComponent`, and `PluginAwareRouter` can read it.
+///
+/// ```ignore
+/// use_context_provider(|| HostCtxRef::new(MyHostCtx { /* ... */ }));
+/// ```
+pub type HostCtxRef<HostCtx> = std::sync::Arc<HostCtx>;
