@@ -182,7 +182,7 @@ async fn record_call_for_call_plugin() {
     let session = default_session();
     let id = PluginId("test/echo-fn".into());
     let _: serde_json::Value = runtime
-        .call_plugin(&id, "echo_fn", &serde_json::json!({"k": "v"}), &session)
+        .call_plugin(&id, "echo_fn", &serde_json::json!({"k": "v"}), &session, &())
         .await
         .expect("call_plugin failed");
 

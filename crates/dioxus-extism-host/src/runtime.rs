@@ -2146,21 +2146,29 @@ impl<HostCtx> PluginRuntime<HostCtx> {
     /// (slots, hooks, transforms, events). The export must accept JSON-encoded `I`
     /// and return JSON-encoded `O`.
     ///
+    /// The `host_ctx` is threaded through to any host policy callback that fires
+    /// during this call (e.g. future capability checks registered via
+    /// [`register_capability_check_ctx`]).
+    ///
     /// # Errors
     /// Returns `PluginRuntimeError::PluginNotFound` if the plugin is not registered,
     /// `PluginRuntimeError::PluginDisabled` if it is currently disabled,
     /// or `PluginRuntimeError::CallFailed` if the WASM call itself fails.
+    ///
+    /// [`register_capability_check_ctx`]: Self::register_capability_check_ctx
     pub async fn call_plugin<I, O>(
         &self,
         plugin_id: &PluginId,
         function_name: impl Into<String>,
         input: &I,
         session: &SessionCtx,
+        host_ctx: &HostCtx,
     ) -> Result<O, PluginRuntimeError>
     where
         I: Serialize,
         O: DeserializeOwned + Send + 'static,
     {
+        let _ = host_ctx; // threaded through to callbacks; no callbacks invoked here yet
         let (pool, active_count, pool_size) = {
             let plugins = self.plugins.read().await;
             let plugin = plugins
