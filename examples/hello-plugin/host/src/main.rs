@@ -30,7 +30,7 @@ fn server_main() {
                 .expect("examples dir has parent")
                 .join("target/wasm32-unknown-unknown/release/hello_plugin_plugin.wasm");
 
-            let mut builder = PluginRuntimeBuilder::new();
+            let mut builder: PluginRuntimeBuilder = PluginRuntimeBuilder::new();
             if wasm_path.exists() {
                 builder = builder.add_plugin(PluginSource::File(wasm_path));
                 tracing::info!("hello-plugin loaded");

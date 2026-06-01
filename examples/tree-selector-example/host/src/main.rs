@@ -33,7 +33,7 @@ fn server_main() {
             let wasm_a = base.join("tree_selector_example_plugin_a.wasm");
             let wasm_b = base.join("tree_selector_example_plugin_b.wasm");
 
-            let mut builder = PluginRuntimeBuilder::new();
+            let mut builder: PluginRuntimeBuilder = PluginRuntimeBuilder::new();
             if wasm_a.exists() {
                 builder = builder.add_plugin(PluginSource::File(wasm_a));
                 tracing::info!("tree-selector plugin_a loaded");

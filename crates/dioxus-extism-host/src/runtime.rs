@@ -440,7 +440,14 @@ pub enum HookOutcome<T> {
 // ── PluginRuntime ─────────────────────────────────────────────────────────────
 
 /// The central server-side plugin runtime.
-pub struct PluginRuntime {
+///
+/// Generic over an opaque `HostCtx` type that flows through every runtime
+/// decision-point callback (route-replace policy, capability checks, command hooks).
+/// The default `HostCtx = ()` preserves the existing public API for hosts that have
+/// no per-call context.
+///
+/// See [`CallContext`] and the host-context-generic RFC for full details.
+pub struct PluginRuntime<HostCtx = ()> {
     pub(crate) plugins: RwLock<IndexMap<PluginId, LoadedPlugin>>,
     pub(crate) global_states: Arc<RwLock<GlobalStateMap>>,
     pub(crate) session_states: Arc<RwLock<SessionStateMap>>,
@@ -469,9 +476,21 @@ pub struct PluginRuntime {
     pub(crate) require_signature: bool,
     /// Optional observability hook for call latency and pool utilization metrics.
     pub(crate) metrics: Option<Arc<dyn RuntimeMetrics>>,
+    /// Holds the `HostCtx` type parameter until steps 3/4 wire it into the policy fields.
+    pub(crate) _host_ctx: std::marker::PhantomData<HostCtx>,
 }
 
-impl PluginRuntime {
+impl<HostCtx> PluginRuntime<HostCtx> {
+    /// Create a [`PluginRuntimeBuilder`] for `PluginRuntime<HostCtx>`.
+    ///
+    /// Equivalent to `PluginRuntimeBuilder::<HostCtx>::new()`.
+    #[must_use]
+    pub fn builder() -> PluginRuntimeBuilder<HostCtx> {
+        PluginRuntimeBuilder::new()
+    }
+}
+
+impl<HostCtx> PluginRuntime<HostCtx> {
     /// Returns the [`TrustTag`] recorded when the plugin was loaded, or `None` if not found.
     ///
     /// Hosts use the tag — together with capability checks (§3) and the route-replace
@@ -2584,9 +2603,12 @@ pub trait StatePersistenceProvider: Send + Sync + 'static {
 
 // ── PluginRuntimeBuilder ──────────────────────────────────────────────────────
 
-/// Builder for `PluginRuntime`.
-#[derive(Default)]
-pub struct PluginRuntimeBuilder {
+/// Builder for [`PluginRuntime`].
+///
+/// Generic over `HostCtx` — the opaque host-context type that will flow through
+/// every runtime decision-point callback once steps 3–5 of the host-context-generic
+/// RFC are applied. For hosts that need no per-call context use the default `HostCtx = ()`.
+pub struct PluginRuntimeBuilder<HostCtx = ()> {
     sources: Vec<(PluginSource, PluginInstallConfig)>,
     extra_host_fns: Vec<extism::Function>,
     wasm_cache_path: Option<PathBuf>,
@@ -2601,9 +2623,33 @@ pub struct PluginRuntimeBuilder {
     trust_keys: Vec<TrustKey>,
     require_signature: bool,
     metrics: Option<Arc<dyn RuntimeMetrics>>,
+    _host_ctx: std::marker::PhantomData<HostCtx>,
 }
 
-impl PluginRuntimeBuilder {
+/// Manual `Default` impl so that `HostCtx: Default` is not required.
+impl<HostCtx> Default for PluginRuntimeBuilder<HostCtx> {
+    fn default() -> Self {
+        Self {
+            sources: Vec::new(),
+            extra_host_fns: Vec::new(),
+            wasm_cache_path: None,
+            session_ttl: None,
+            invocations: Vec::new(),
+            persistence: None,
+            plugin_page_prefix: None,
+            extension_handlers: Vec::new(),
+            on_unknown_extension: OnUnknownExtension::default(),
+            capability_checks: Vec::new(),
+            route_replace_policy: None,
+            trust_keys: Vec::new(),
+            require_signature: false,
+            metrics: None,
+            _host_ctx: std::marker::PhantomData,
+        }
+    }
+}
+
+impl<HostCtx> PluginRuntimeBuilder<HostCtx> {
     /// Create an empty builder.
     #[must_use]
     pub fn new() -> Self {
@@ -2792,7 +2838,10 @@ impl PluginRuntimeBuilder {
     /// Returns an error if any plugin fails to load, compile, or has an incompatible
     /// protocol version, unregistered invocation capability, or checksum mismatch.
     #[allow(clippy::too_many_lines)]
-    pub async fn build(self) -> Result<Arc<PluginRuntime>, PluginRuntimeError> {
+    pub async fn build(self) -> Result<Arc<PluginRuntime<HostCtx>>, PluginRuntimeError>
+    where
+        HostCtx: Send + Sync + 'static,
+    {
         let global_states: Arc<RwLock<GlobalStateMap>> = Arc::new(RwLock::new(HashMap::new()));
         let session_states: Arc<RwLock<SessionStateMap>> = Arc::new(RwLock::new(HashMap::new()));
         let session_last_access: Arc<RwLock<HashMap<SessionId, std::time::Instant>>> =
@@ -3041,7 +3090,7 @@ impl PluginRuntimeBuilder {
 
         let event_bus = EventBus::build_from_plugins(&all_plugins);
         let registries =
-            PluginRuntime::build_registries(&all_plugins, self.plugin_page_prefix.as_deref())?;
+            PluginRuntime::<HostCtx>::build_registries(&all_plugins, self.plugin_page_prefix.as_deref())?;
         let (override_map_tx, _) = broadcast::channel::<OverrideMap>(32);
 
         let runtime = Arc::new(PluginRuntime {
@@ -3063,6 +3112,7 @@ impl PluginRuntimeBuilder {
             trust_keys,
             require_signature,
             metrics: self.metrics,
+            _host_ctx: std::marker::PhantomData,
         });
 
         // Event dispatch task: receives plugin-emitted events and fans them out.
@@ -3136,7 +3186,7 @@ async fn load_plugin_manifest(source: &PluginSource) -> Result<PluginManifest, P
 
 // ── Plugin API router ────────────────────────────────────────────────────────
 
-impl PluginRuntime {
+impl<HostCtx> PluginRuntime<HostCtx> {
     /// Build an `axum::Router` containing all inbound HTTP API routes declared by plugins.
     ///
     /// Call this **before** `serve_dioxus_application` — that call installs a fallback
@@ -3291,7 +3341,7 @@ fn colon_params_to_braces(path: &str) -> String {
 
 // ── Plugin page route rendering ───────────────────────────────────────────────
 
-impl PluginRuntime {
+impl<HostCtx> PluginRuntime<HostCtx> {
     /// Render a plugin-declared page route, returning `None` if no plugin owns the path.
     ///
     /// `relative_path` is the path **after** the host's configured prefix, e.g. `"/notes"`.
@@ -3344,14 +3394,17 @@ impl PluginRuntime {
 // ── PluginRuntimeExt for axum::Router ────────────────────────────────────────
 
 /// Extension trait for wiring `PluginRuntime` into an Axum router.
-pub trait PluginRuntimeExt {
-    /// Add `PluginRuntime` as an Axum layer so server functions can extract it.
+///
+/// The `HostCtx` generic parameter matches the one on [`PluginRuntime`].
+/// For hosts using the default `HostCtx = ()` the call site is unchanged.
+pub trait PluginRuntimeExt<HostCtx = ()> {
+    /// Add `PluginRuntime<HostCtx>` as an Axum layer so server functions can extract it.
     #[must_use]
-    fn with_plugin_runtime(self, runtime: Arc<PluginRuntime>) -> Self;
+    fn with_plugin_runtime(self, runtime: Arc<PluginRuntime<HostCtx>>) -> Self;
 }
 
-impl PluginRuntimeExt for axum::Router {
-    fn with_plugin_runtime(self, runtime: Arc<PluginRuntime>) -> Self {
+impl<HostCtx: Send + Sync + 'static> PluginRuntimeExt<HostCtx> for axum::Router {
+    fn with_plugin_runtime(self, runtime: Arc<PluginRuntime<HostCtx>>) -> Self {
         self.layer(axum::Extension(runtime))
     }
 }
@@ -3402,7 +3455,7 @@ mod tests {
     #[tokio::test]
     async fn session_ttl_within_ttl_not_evicted() {
         let ttl = Duration::from_millis(200);
-        let runtime = PluginRuntimeBuilder::new()
+        let runtime = PluginRuntimeBuilder::<()>::new()
             .with_session_ttl(ttl)
             .build()
             .await
@@ -3440,7 +3493,7 @@ mod tests {
     #[tokio::test]
     async fn session_ttl_beyond_ttl_is_evicted() {
         let ttl = Duration::from_millis(200);
-        let runtime = PluginRuntimeBuilder::new()
+        let runtime = PluginRuntimeBuilder::<()>::new()
             .with_session_ttl(ttl)
             .build()
             .await
