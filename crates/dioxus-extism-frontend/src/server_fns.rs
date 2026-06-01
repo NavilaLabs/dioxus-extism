@@ -75,7 +75,7 @@ pub async fn get_route_transforms(
     let session = SessionCtx { session_id, user_id: None, client: caps, caller: None };
 
     runtime
-        .render_route_transforms(&path, &session)
+        .render_route_transforms(&path, &session, &())
         .await
         .map_err(|e| ServerFnError::new(e.to_string()))
 }

@@ -3,8 +3,6 @@
 /// Requires compiled fixtures:
 ///   cargo build --target wasm32-unknown-unknown --release \
 ///     -p fixture-route-replace -p fixture-wrap-a
-use std::sync::Arc;
-
 use dioxus_extism_host::{PluginRuntimeBuilder, PluginSource, RouteTransforms};
 use dioxus_extism_protocol::{
     ClientCapabilities, PluginView, SessionCtx, SessionId, PROTOCOL_VERSION,
@@ -49,7 +47,7 @@ fn view_contains_text(view: &PluginView, needle: &str) -> bool {
 
 #[tokio::test]
 async fn route_replace_produces_replacement() {
-    let runtime = PluginRuntimeBuilder::new()
+    let runtime = PluginRuntimeBuilder::<()>::new()
         .add_plugin(src(ROUTE_REPLACE_WASM))
         .build()
         .await
@@ -57,7 +55,7 @@ async fn route_replace_produces_replacement() {
 
     let session = default_session();
     let result: RouteTransforms = runtime
-        .render_route_transforms("/replace/42", &session)
+        .render_route_transforms("/replace/42", &session, &())
         .await
         .expect("render_route_transforms failed");
 
@@ -71,7 +69,7 @@ async fn route_replace_produces_replacement() {
 
 #[tokio::test]
 async fn non_matching_path_no_replacement() {
-    let runtime = PluginRuntimeBuilder::new()
+    let runtime = PluginRuntimeBuilder::<()>::new()
         .add_plugin(src(ROUTE_REPLACE_WASM))
         .build()
         .await
@@ -79,7 +77,7 @@ async fn non_matching_path_no_replacement() {
 
     let session = default_session();
     let result: RouteTransforms = runtime
-        .render_route_transforms("/other/path", &session)
+        .render_route_transforms("/other/path", &session, &())
         .await
         .expect("render_route_transforms failed");
 
@@ -88,16 +86,16 @@ async fn non_matching_path_no_replacement() {
 
 #[tokio::test]
 async fn policy_deny_blocks_replacement() {
-    let runtime = PluginRuntimeBuilder::new()
+    let runtime = PluginRuntimeBuilder::<()>::new()
         .add_plugin(src(ROUTE_REPLACE_WASM))
-        .with_route_replace_policy(Arc::new(|_, _pattern: &str| false))
+        .with_route_replace_policy(|_, _pattern: &str| false)
         .build()
         .await
         .expect("build failed");
 
     let session = default_session();
     let result: RouteTransforms = runtime
-        .render_route_transforms("/replace/99", &session)
+        .render_route_transforms("/replace/99", &session, &())
         .await
         .expect("render_route_transforms failed");
 
@@ -106,7 +104,7 @@ async fn policy_deny_blocks_replacement() {
 
 #[tokio::test]
 async fn no_policy_allows_by_default() {
-    let runtime = PluginRuntimeBuilder::new()
+    let runtime = PluginRuntimeBuilder::<()>::new()
         .add_plugin(src(ROUTE_REPLACE_WASM))
         .build()
         .await
@@ -114,7 +112,7 @@ async fn no_policy_allows_by_default() {
 
     let session = default_session();
     let result: RouteTransforms = runtime
-        .render_route_transforms("/replace/1", &session)
+        .render_route_transforms("/replace/1", &session, &())
         .await
         .expect("render_route_transforms failed");
 
@@ -123,7 +121,7 @@ async fn no_policy_allows_by_default() {
 
 #[tokio::test]
 async fn policy_registered_at_runtime_takes_effect() {
-    let runtime = PluginRuntimeBuilder::new()
+    let runtime = PluginRuntimeBuilder::<()>::new()
         .add_plugin(src(ROUTE_REPLACE_WASM))
         .build()
         .await
@@ -132,16 +130,16 @@ async fn policy_registered_at_runtime_takes_effect() {
     // Before registering a policy — replacement is allowed.
     let session = default_session();
     let before: RouteTransforms = runtime
-        .render_route_transforms("/replace/10", &session)
+        .render_route_transforms("/replace/10", &session, &())
         .await
         .expect("render_route_transforms failed");
     assert!(before.replacement.is_some(), "should be allowed before policy");
 
     // Register a deny-all policy at runtime.
-    runtime.register_route_replace_policy(Arc::new(|_, _| false)).await;
+    runtime.register_route_replace_policy(|_, _| false).await;
 
     let after: RouteTransforms = runtime
-        .render_route_transforms("/replace/10", &session)
+        .render_route_transforms("/replace/10", &session, &())
         .await
         .expect("render_route_transforms failed");
     assert!(after.replacement.is_none(), "policy registered at runtime should deny");

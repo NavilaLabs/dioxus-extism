@@ -72,7 +72,7 @@ async fn main() {
     // route transforms for "/" in one pass. The result is a plain data value
     // that can be passed into the synchronous SSR render step below.
     let ssr_data = runtime
-        .ssr_render_route("/", &session)
+        .ssr_render_route("/", &session, &())
         .await
         .expect("ssr_render_route failed");
 

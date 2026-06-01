@@ -106,7 +106,7 @@ fn make_nested_tree(class: &str, depth: usize) -> PluginView {
 
 #[tokio::test]
 async fn render_slot_contributions_ordered_priority_descending() {
-    let runtime = PluginRuntimeBuilder::new()
+    let runtime = PluginRuntimeBuilder::<()>::new()
         .add_plugin(PluginSource::Bytes(SLOT_HIGH_WASM.into()))
         .add_plugin(PluginSource::Bytes(SLOT_NORMAL_WASM.into()))
         .build()
@@ -129,7 +129,7 @@ async fn render_slot_contributions_ordered_priority_descending() {
 
 #[tokio::test]
 async fn render_slot_call_failed_plugin_incompatible_others_unaffected() {
-    let runtime = PluginRuntimeBuilder::new()
+    let runtime = PluginRuntimeBuilder::<()>::new()
         .add_plugin(PluginSource::Bytes(SLOT_FAILING_WASM.into()))
         .add_plugin(PluginSource::Bytes(SLOT_NORMAL_WASM.into()))
         .build()
@@ -162,7 +162,7 @@ async fn render_slot_call_failed_plugin_incompatible_others_unaffected() {
 
 #[tokio::test]
 async fn render_slot_disabled_plugin_contributes_incompatible_not_gap() {
-    let runtime = PluginRuntimeBuilder::new()
+    let runtime = PluginRuntimeBuilder::<()>::new()
         .add_plugin(PluginSource::Bytes(SLOT_NORMAL_WASM.into()))
         .build()
         .await
@@ -185,7 +185,7 @@ async fn render_slot_disabled_plugin_contributes_incompatible_not_gap() {
 
 #[tokio::test]
 async fn render_slot_min_protocol_version_exceeds_client_yields_incompatible() {
-    let runtime = PluginRuntimeBuilder::new()
+    let runtime = PluginRuntimeBuilder::<()>::new()
         .add_plugin(PluginSource::Bytes(SLOT_NORMAL_WASM.into()))
         .build()
         .await
@@ -206,7 +206,7 @@ async fn render_slot_min_protocol_version_exceeds_client_yields_incompatible() {
 
 #[tokio::test]
 async fn render_slot_slot_name_not_in_registry_returns_empty() {
-    let runtime = PluginRuntimeBuilder::new()
+    let runtime = PluginRuntimeBuilder::<()>::new()
         .add_plugin(PluginSource::Bytes(SLOT_NORMAL_WASM.into()))
         .build()
         .await
@@ -228,7 +228,7 @@ async fn run_hook_continue_replace_cancel_chain_stops_at_cancel() {
         overrides: [("test-hook".into(), -1)].into_iter().collect(),
         ..Default::default()
     };
-    let runtime = PluginRuntimeBuilder::new()
+    let runtime = PluginRuntimeBuilder::<()>::new()
         .add_plugin(PluginSource::Bytes(HOOK_CONTINUE_WASM.into()))
         .add_plugin(PluginSource::Bytes(HOOK_REPLACE_WASM.into()))
         .add_plugin(PluginSource::Bytes(HOOK_CANCEL_WASM.into()))
@@ -266,7 +266,7 @@ async fn run_hook_continue_replace_cancel_chain_stops_at_cancel() {
 
 #[tokio::test]
 async fn run_hook_plugin_err_in_middle_does_not_abort_chain() {
-    let runtime = PluginRuntimeBuilder::new()
+    let runtime = PluginRuntimeBuilder::<()>::new()
         .add_plugin(PluginSource::Bytes(HOOK_CONTINUE_WASM.into()))
         .add_plugin(PluginSource::Bytes(HOOK_ERRORING_WASM.into()))
         .build()
@@ -288,7 +288,7 @@ async fn run_hook_plugin_err_in_middle_does_not_abort_chain() {
 
 #[tokio::test]
 async fn render_route_transforms_wrap_fold_sequential_pipeline() {
-    let runtime = PluginRuntimeBuilder::new()
+    let runtime = PluginRuntimeBuilder::<()>::new()
         .add_plugin(PluginSource::Bytes(WRAP_A_WASM.into()))
         .add_plugin(PluginSource::Bytes(WRAP_B_WASM.into()))
         .build()
@@ -296,7 +296,7 @@ async fn render_route_transforms_wrap_fold_sequential_pipeline() {
         .expect("build failed");
 
     let result = runtime
-        .render_route_transforms("/test/42", &default_session())
+        .render_route_transforms("/test/42", &default_session(), &())
         .await
         .expect("render_route_transforms failed");
 
@@ -318,7 +318,7 @@ async fn render_route_transforms_wrap_fold_sequential_pipeline() {
 
 #[tokio::test]
 async fn render_route_transforms_wrap_plugin_fail_passes_through_unchanged() {
-    let runtime = PluginRuntimeBuilder::new()
+    let runtime = PluginRuntimeBuilder::<()>::new()
         .add_plugin(PluginSource::Bytes(WRAP_A_WASM.into()))
         .add_plugin(PluginSource::Bytes(WRAP_FAILING_WASM.into()))
         .add_plugin(PluginSource::Bytes(WRAP_B_WASM.into()))
@@ -327,7 +327,7 @@ async fn render_route_transforms_wrap_plugin_fail_passes_through_unchanged() {
         .expect("build failed");
 
     let result = runtime
-        .render_route_transforms("/test/42", &default_session())
+        .render_route_transforms("/test/42", &default_session(), &())
         .await
         .expect("render_route_transforms failed");
 
@@ -343,14 +343,14 @@ async fn render_route_transforms_wrap_plugin_fail_passes_through_unchanged() {
 
 #[tokio::test]
 async fn render_route_transforms_unmatched_path_returns_empty() {
-    let runtime = PluginRuntimeBuilder::new()
+    let runtime = PluginRuntimeBuilder::<()>::new()
         .add_plugin(PluginSource::Bytes(WRAP_A_WASM.into()))
         .build()
         .await
         .expect("build failed");
 
     let result = runtime
-        .render_route_transforms("/other/path", &default_session())
+        .render_route_transforms("/other/path", &default_session(), &())
         .await
         .expect("render_route_transforms failed");
 
@@ -361,7 +361,7 @@ async fn render_route_transforms_unmatched_path_returns_empty() {
 
 #[tokio::test]
 async fn apply_tree_transforms_recursive_finds_node_at_depth_3() {
-    let runtime = PluginRuntimeBuilder::new()
+    let runtime = PluginRuntimeBuilder::<()>::new()
         .add_plugin(PluginSource::Bytes(WITHIN_SELECTOR_WASM.into()))
         .build()
         .await
@@ -389,7 +389,7 @@ async fn apply_tree_transforms_recursive_finds_node_at_depth_3() {
 
 #[tokio::test]
 async fn apply_tree_transforms_shallow_does_not_descend_past_direct_children() {
-    let runtime = PluginRuntimeBuilder::new()
+    let runtime = PluginRuntimeBuilder::<()>::new()
         .add_plugin(PluginSource::Bytes(WITHIN_SELECTOR_WASM.into()))
         .build()
         .await
@@ -437,7 +437,7 @@ async fn apply_tree_transforms_shallow_does_not_descend_past_direct_children() {
 
 #[tokio::test]
 async fn apply_tree_transforms_and_requires_both_conditions() {
-    let runtime = PluginRuntimeBuilder::new()
+    let runtime = PluginRuntimeBuilder::<()>::new()
         .add_plugin(PluginSource::Bytes(WITHIN_SELECTOR_WASM.into()))
         .build()
         .await
@@ -499,7 +499,7 @@ async fn apply_tree_transforms_and_requires_both_conditions() {
 
 #[tokio::test]
 async fn apply_tree_transforms_or_matches_either_condition() {
-    let runtime = PluginRuntimeBuilder::new()
+    let runtime = PluginRuntimeBuilder::<()>::new()
         .add_plugin(PluginSource::Bytes(WITHIN_SELECTOR_WASM.into()))
         .build()
         .await
@@ -564,7 +564,7 @@ async fn apply_tree_transforms_or_matches_either_condition() {
 
 #[tokio::test]
 async fn reload_plugin_override_map_version_increments_by_exactly_one() {
-    let runtime = PluginRuntimeBuilder::new()
+    let runtime = PluginRuntimeBuilder::<()>::new()
         .add_plugin(PluginSource::Bytes(SLOT_NORMAL_WASM.into()))
         .build()
         .await
@@ -585,7 +585,7 @@ async fn reload_plugin_override_map_version_increments_by_exactly_one() {
 
 #[tokio::test]
 async fn reload_plugin_on_unload_called_on_old_pool() {
-    let runtime = PluginRuntimeBuilder::new()
+    let runtime = PluginRuntimeBuilder::<()>::new()
         .add_plugin(PluginSource::Bytes(SLOT_NORMAL_WASM.into()))
         .build()
         .await
@@ -615,7 +615,7 @@ async fn reload_plugin_on_unload_called_on_old_pool() {
 
 #[tokio::test]
 async fn unload_plugin_slot_disappears_from_render_slot() {
-    let runtime = PluginRuntimeBuilder::new()
+    let runtime = PluginRuntimeBuilder::<()>::new()
         .add_plugin(PluginSource::Bytes(SLOT_NORMAL_WASM.into()))
         .build()
         .await
@@ -636,7 +636,7 @@ async fn unload_plugin_slot_disappears_from_render_slot() {
 #[tokio::test]
 async fn enable_disable_toggle_concurrent_render_no_panic() {
     let runtime = Arc::new(
-        PluginRuntimeBuilder::new()
+        PluginRuntimeBuilder::<()>::new()
             .add_plugin(PluginSource::Bytes(SLOT_NORMAL_WASM.into()))
             .build()
             .await
@@ -681,7 +681,7 @@ async fn enable_disable_toggle_concurrent_render_no_panic() {
 
 #[tokio::test]
 async fn on_load_failure_build_returns_err_plugin_not_inserted() {
-    let result = PluginRuntimeBuilder::new()
+    let result = PluginRuntimeBuilder::<()>::new()
         .add_plugin(PluginSource::Bytes(FAILING_ON_LOAD_WASM.into()))
         .build()
         .await;
@@ -693,7 +693,7 @@ async fn on_load_failure_build_returns_err_plugin_not_inserted() {
 
 #[tokio::test]
 async fn client_capabilities_high_app_version_yields_incompatible() {
-    let runtime = PluginRuntimeBuilder::new()
+    let runtime = PluginRuntimeBuilder::<()>::new()
         .add_plugin(PluginSource::Bytes(HIGH_APP_VERSION_WASM.into()))
         .build()
         .await
@@ -728,7 +728,7 @@ async fn client_capabilities_high_app_version_yields_incompatible() {
 #[tokio::test]
 async fn plugin_install_config_tie_at_equal_priority_preserves_insertion_order() {
     let cfg = PluginInstallConfig { base_priority: Some(500), ..Default::default() };
-    let runtime = PluginRuntimeBuilder::new()
+    let runtime = PluginRuntimeBuilder::<()>::new()
         .add_plugin_with_config(PluginSource::Bytes(SLOT_NORMAL_WASM.into()), cfg.clone())
         .add_plugin_with_config(PluginSource::Bytes(SLOT_HIGH_WASM.into()), cfg)
         .build()
@@ -759,7 +759,7 @@ async fn plugin_install_config_tie_at_equal_priority_preserves_insertion_order()
 async fn protocol_version_guard_at_build_time_rejects_future_version_plugin() {
     use dioxus_extism_host::PluginRuntimeError;
 
-    let result = PluginRuntimeBuilder::new()
+    let result = PluginRuntimeBuilder::<()>::new()
         .add_plugin(PluginSource::Bytes(HIGH_PROTOCOL_VERSION_WASM.into()))
         .build()
         .await;

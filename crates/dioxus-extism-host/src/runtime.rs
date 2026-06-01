@@ -10,10 +10,10 @@ use std::{
 
 use async_trait::async_trait;
 use dioxus_extism_protocol::{
-    ClientCapabilities, ComponentResolution, HandlerId, HookCall, HookResult, HostCapability,
-    HostComponentRef, OverrideMap, PluginEvent, PluginId, PluginManifest, PluginView, PriorityHint,
-    RoutePattern, RouteTransforms, SessionCtx, SessionId, SlotContent, TransformContext,
-    TransformInput, TransformOp, TransformOutput, ViewUpdate, PROTOCOL_VERSION,
+    CallContext, ClientCapabilities, ComponentResolution, HandlerId, HookCall, HookResult,
+    HostCapability, HostComponentRef, OverrideMap, PluginEvent, PluginId, PluginManifest,
+    PluginView, PriorityHint, RoutePattern, RouteTransforms, SessionCtx, SessionId, SlotContent,
+    TransformContext, TransformInput, TransformOp, TransformOutput, ViewUpdate, PROTOCOL_VERSION,
 };
 use extism::convert::Json;
 use futures::future::BoxFuture;
@@ -31,14 +31,17 @@ use crate::trust::{TrustKey, TrustTag, compute_trust_tag};
 /// A host-provided policy callback that controls whether a plugin's `RouteReplace`
 /// transform is honoured for a given route pattern.
 ///
-/// Receives the declaring plugin's [`PluginId`] and the route pattern string (e.g.
-/// `"/products/:id"`). Return `true` to allow the replacement, `false` to deny.
+/// Receives the declaring plugin's [`PluginId`], the route pattern string (e.g.
+/// `"/products/:id"`), and the combined per-call [`CallContext`].
+/// Return `true` to allow the replacement, `false` to deny.
 ///
 /// Default when no policy is registered: **allow**.
 ///
-/// Register via [`PluginRuntimeBuilder::with_route_replace_policy`] or
-/// [`PluginRuntime::register_route_replace_policy`].
-pub type RouteReplacePolicyFn = dyn Fn(&PluginId, &str) -> bool + Send + Sync;
+/// Register via [`PluginRuntimeBuilder::with_route_replace_policy`] (two-argument legacy
+/// form) or [`PluginRuntimeBuilder::with_route_replace_policy_ctx`] (full form with
+/// [`CallContext`]).
+pub type RouteReplacePolicyFn<HostCtx = ()> =
+    dyn Fn(&PluginId, &str, &CallContext<'_, HostCtx>) -> bool + Send + Sync;
 
 // ── Capability check type ─────────────────────────────────────────────────────
 
@@ -469,15 +472,13 @@ pub struct PluginRuntime<HostCtx = ()> {
     /// Host-registered checks for `HostCapability::Custom` namespaces.
     pub(crate) capability_checks: RwLock<HashMap<String, Arc<CapabilityCheckFn>>>,
     /// Optional host policy for `TransformOp::RouteReplace`. `None` means allow all.
-    pub(crate) route_replace_policy: RwLock<Option<Arc<RouteReplacePolicyFn>>>,
+    pub(crate) route_replace_policy: RwLock<Option<Arc<RouteReplacePolicyFn<HostCtx>>>>,
     /// Ed25519 public keys used to verify plugin signatures at load time.
     pub(crate) trust_keys: Vec<TrustKey>,
     /// If `true`, plugins without a valid Ed25519 signature are rejected at load time.
     pub(crate) require_signature: bool,
     /// Optional observability hook for call latency and pool utilization metrics.
     pub(crate) metrics: Option<Arc<dyn RuntimeMetrics>>,
-    /// Holds the `HostCtx` type parameter until steps 3/4 wire it into the policy fields.
-    pub(crate) _host_ctx: std::marker::PhantomData<HostCtx>,
 }
 
 impl<HostCtx> PluginRuntime<HostCtx> {
@@ -516,11 +517,32 @@ impl<HostCtx> PluginRuntime<HostCtx> {
             .insert(namespace.into(), handler);
     }
 
-    /// Set the policy for `TransformOp::RouteReplace`. Replaces any previously set policy.
+    /// Set a route-replace policy using the two-argument legacy form (no [`CallContext`]).
+    ///
+    /// The closure receives the plugin id and the route pattern; the per-call context is
+    /// discarded. Use [`register_route_replace_policy_ctx`] when you need the context.
     ///
     /// For startup-time registration prefer [`PluginRuntimeBuilder::with_route_replace_policy`].
-    pub async fn register_route_replace_policy(&self, policy: Arc<RouteReplacePolicyFn>) {
-        *self.route_replace_policy.write().await = Some(policy);
+    ///
+    /// [`register_route_replace_policy_ctx`]: Self::register_route_replace_policy_ctx
+    pub async fn register_route_replace_policy(
+        &self,
+        policy: impl Fn(&PluginId, &str) -> bool + Send + Sync + 'static,
+    ) {
+        let wrapped: Arc<RouteReplacePolicyFn<HostCtx>> =
+            Arc::new(move |id, route, _ctx| policy(id, route));
+        *self.route_replace_policy.write().await = Some(wrapped);
+    }
+
+    /// Set a route-replace policy that receives the full [`CallContext`].
+    ///
+    /// Replaces any previously set policy. For startup-time registration prefer
+    /// [`PluginRuntimeBuilder::with_route_replace_policy_ctx`].
+    pub async fn register_route_replace_policy_ctx(
+        &self,
+        policy: impl Fn(&PluginId, &str, &CallContext<'_, HostCtx>) -> bool + Send + Sync + 'static,
+    ) {
+        *self.route_replace_policy.write().await = Some(Arc::new(policy));
     }
 
     /// Register a check for a `HostCapability::Custom` namespace.
@@ -601,11 +623,12 @@ impl<HostCtx> PluginRuntime<HostCtx> {
         &self,
         path: &str,
         session: &SessionCtx,
+        host_ctx: &HostCtx,
     ) -> Result<dioxus_extism_protocol::SsrRouteOutput, PluginRuntimeError> {
         use dioxus_extism_protocol::{SsrComponentResolution, SsrRouteOutput, SsrRouteTransforms};
 
         // Route transforms.
-        let rt = self.render_route_transforms(path, session).await?;
+        let rt = self.render_route_transforms(path, session, host_ctx).await?;
         let route_transforms = SsrRouteTransforms {
             before: rt.before,
             wrap: rt.wrap,
@@ -1110,11 +1133,12 @@ impl<HostCtx> PluginRuntime<HostCtx> {
     ///
     /// # Errors
     /// Returns `PluginRuntimeError` if locking the registry fails.
-    #[tracing::instrument(skip(self, session), fields(path))]
+    #[tracing::instrument(skip(self, session, host_ctx), fields(path))]
     pub async fn render_route_transforms(
         &self,
         path: &str,
         session: &SessionCtx,
+        host_ctx: &HostCtx,
     ) -> Result<RouteTransforms, PluginRuntimeError> {
         let all_entries = {
             let regs = self.registries.read().await;
@@ -1227,7 +1251,8 @@ impl<HostCtx> PluginRuntime<HostCtx> {
                 // Apply host policy; allow by default.
                 if let Some(pol) = policy.as_deref() {
                     let pattern = entry.route_pattern.as_deref().unwrap_or("");
-                    if !pol(&entry.plugin_id, pattern) {
+                    let call_ctx = CallContext::new(session, host_ctx);
+                    if !pol(&entry.plugin_id, pattern, &call_ctx) {
                         continue;
                     }
                 }
@@ -2619,11 +2644,10 @@ pub struct PluginRuntimeBuilder<HostCtx = ()> {
     extension_handlers: Vec<(String, Arc<dyn ManifestExtensionHandler>)>,
     on_unknown_extension: OnUnknownExtension,
     capability_checks: Vec<(String, Arc<CapabilityCheckFn>)>,
-    route_replace_policy: Option<Arc<RouteReplacePolicyFn>>,
+    route_replace_policy: Option<Arc<RouteReplacePolicyFn<HostCtx>>>,
     trust_keys: Vec<TrustKey>,
     require_signature: bool,
     metrics: Option<Arc<dyn RuntimeMetrics>>,
-    _host_ctx: std::marker::PhantomData<HostCtx>,
 }
 
 /// Manual `Default` impl so that `HostCtx: Default` is not required.
@@ -2644,7 +2668,6 @@ impl<HostCtx> Default for PluginRuntimeBuilder<HostCtx> {
             trust_keys: Vec::new(),
             require_signature: false,
             metrics: None,
-            _host_ctx: std::marker::PhantomData,
         }
     }
 }
@@ -2754,11 +2777,32 @@ impl<HostCtx> PluginRuntimeBuilder<HostCtx> {
         self
     }
 
-    /// Register a policy callback that controls whether `TransformOp::RouteReplace`
-    /// is honoured. Default when not set: **allow all**.
+    /// Register a route-replace policy using the two-argument legacy form (no [`CallContext`]).
+    ///
+    /// The closure receives only the plugin id and the route pattern. Use
+    /// [`with_route_replace_policy_ctx`] when you also need the per-call context.
+    /// Default when not set: **allow all**.
+    ///
+    /// [`with_route_replace_policy_ctx`]: Self::with_route_replace_policy_ctx
     #[must_use]
-    pub fn with_route_replace_policy(mut self, policy: Arc<RouteReplacePolicyFn>) -> Self {
-        self.route_replace_policy = Some(policy);
+    pub fn with_route_replace_policy(
+        mut self,
+        policy: impl Fn(&PluginId, &str) -> bool + Send + Sync + 'static,
+    ) -> Self {
+        self.route_replace_policy =
+            Some(Arc::new(move |id, route, _ctx| policy(id, route)));
+        self
+    }
+
+    /// Register a route-replace policy that receives the full [`CallContext`].
+    ///
+    /// Default when not set: **allow all**.
+    #[must_use]
+    pub fn with_route_replace_policy_ctx(
+        mut self,
+        policy: impl Fn(&PluginId, &str, &CallContext<'_, HostCtx>) -> bool + Send + Sync + 'static,
+    ) -> Self {
+        self.route_replace_policy = Some(Arc::new(policy));
         self
     }
 
@@ -3112,7 +3156,6 @@ impl<HostCtx> PluginRuntimeBuilder<HostCtx> {
             trust_keys,
             require_signature,
             metrics: self.metrics,
-            _host_ctx: std::marker::PhantomData,
         });
 
         // Event dispatch task: receives plugin-emitted events and fans them out.
