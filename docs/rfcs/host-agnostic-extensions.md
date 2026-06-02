@@ -70,6 +70,10 @@ Forces the host to own its schema. A host that wants strong typing can ship its 
 
 ## 2. Generic Plugin-Function Dispatch
 
+> **Amended by [host-context-generic RFC](host-context-generic.md)** — `call_plugin`
+> gains a `host_ctx: &HostCtx` parameter so the host can thread its opaque per-call
+> context through the dispatch path.
+
 ### Problem
 Existing call paths (slot rendering, page rendering, transforms, hooks, events) are baked-in. Hosts can't reach into a plugin to invoke arbitrary exports like `compute_thing`, `validate_payload`, or domain-specific computations.
 
@@ -77,21 +81,23 @@ Existing call paths (slot rendering, page rendering, transforms, hooks, events) 
 Add a public method on `PluginRuntime`:
 
 ```rust
-impl PluginRuntime {
+impl<HostCtx> PluginRuntime<HostCtx> {
     pub async fn call_plugin<I, O>(
         &self,
         plugin_id: &PluginId,
         function_name: &str,
         input: &I,
-        ctx: CallCtx,
-    ) -> Result<O, CallError>
+        session: &SessionCtx,
+        host_ctx: &HostCtx,
+    ) -> Result<O, PluginRuntimeError>
     where
         I: Serialize,
-        O: DeserializeOwned;
+        O: DeserializeOwned + Send + 'static;
 }
 ```
 
-`ctx` carries the same capability/session context already used for hooks.
+`session` carries the same capability/session context already used for hooks.
+`host_ctx` is the host's opaque per-call context (see host-context-generic RFC).
 
 `call_plugin` is a thin, **generic** wrapper around the existing Extism pool dispatch — it does not interpret the function name or input semantically. The host is free to use it for any export the plugin declares.
 
@@ -100,6 +106,11 @@ This is the building block that lets a host wire its manifest-extension handlers
 ---
 
 ## 3. Host-Defined Capability Classes
+
+> **Amended by [host-context-generic RFC](host-context-generic.md)** — the check callback
+> now receives a `CallContext<'_, HostCtx>` that carries the host's opaque per-call
+> context alongside the session.  See §3.4–§3.5 of that RFC for the updated
+> `CapabilityCheckFn<HostCtx>` type alias and both registration paths.
 
 ### Problem
 `HostCapability` is currently a fixed enum. Hosts can't introduce new capability classes (e.g., a CMS host wants `CmsScope("publish")`; an IDE host wants `LanguageServer("rust-analyzer")`).
@@ -117,25 +128,49 @@ pub enum HostCapability {
 }
 ```
 
-The host registers a check callback per namespace:
+The host registers a check callback per namespace. Two forms are available:
 
 ```rust
+// Legacy two-argument form — no host context, suitable for load-time checks.
 runtime.register_capability_check(
     "my-host.scope",
-    Box::new(|plugin: &LoadedPlugin, value: &serde_json::Value, ctx: &CallCtx| {
+    |plugin_id: &PluginId, value: &serde_json::Value| -> Result<(), String> {
+        // Runs at plugin load time and optionally at call time.
+        Ok(())
+    },
+);
+
+// Context-aware form — receives the full CallContext at call time.
+// Use this when the decision depends on per-call host state.
+runtime.register_capability_check_ctx(
+    "my-host.scope",
+    |plugin_id: &PluginId, value: &serde_json::Value, ctx: &CallContext<'_, HostCtx>| {
+        // ctx.host is the host's opaque context; ctx.session is the current SessionCtx.
         // Host decides whether this plugin, in this call context, may use this capability.
         Ok(())
-    }),
+    },
 );
 ```
 
-When dioxus-extism encounters a `Custom` capability during a call, it dispatches to the registered check. If no check is registered for the namespace, the default is **deny**.
+Registering via `register_capability_check` (two-argument form) populates both the
+load-time and the call-time check maps, so the closure runs during `build()` / `install()`
+as well as `check_custom_capability()`.  Registering via `register_capability_check_ctx`
+populates only the call-time map; the plugin is admitted at load time and the check fires
+only when the host explicitly calls `check_custom_capability`.
+
+When dioxus-extism encounters a `Custom` capability during a call, it dispatches to the
+registered check. If no check is registered for the namespace, the default is **deny**.
 
 Existing fixed-enum variants continue to be checked by dioxus-extism's built-in logic.
 
 ---
 
 ## 4. Route-Level `TransformOp::Replace`
+
+> **Amended by [host-context-generic RFC](host-context-generic.md)** — the policy
+> callback now receives a `CallContext<'_, HostCtx>` that carries the host's opaque
+> per-call context alongside the session.  See §3.4–§3.5 of that RFC for the updated
+> `RouteReplacePolicyFn<HostCtx>` type alias and both registration paths.
 
 ### Problem
 `TransformOp` for route transforms today supports `Wrap`, `InjectBefore`, `InjectAfter`. There is no way for a plugin to **fully replace** a host route's content — only to wrap or augment it.
@@ -158,14 +193,24 @@ pub enum TransformOp {
 3. `Wrap`/`Inject` from other plugins continue to apply around the replacement.
 
 ### Gating
-**dioxus-extism takes no opinion** on whether a given plugin is allowed to replace a given route. Hosts may register an optional policy callback:
+**dioxus-extism takes no opinion** on whether a given plugin is allowed to replace a given route. Hosts may register an optional policy callback. Two forms are available:
 
 ```rust
+// Legacy two-argument form — no host context.
 runtime.register_route_replace_policy(
-    Box::new(|plugin: &LoadedPlugin, route: &RoutePattern, ctx: &CallCtx| -> bool {
+    |plugin_id: &PluginId, route: &str| -> bool {
         // Host-side policy. Return false to refuse the replacement.
         true
-    }),
+    },
+);
+
+// Context-aware form — receives the full CallContext at call time.
+// Use this when the decision depends on per-call host state (e.g. user tier, tenant).
+runtime.register_route_replace_policy_ctx(
+    |plugin_id: &PluginId, route: &str, ctx: &CallContext<'_, HostCtx>| -> bool {
+        // ctx.host is the host's opaque context; ctx.session is the current SessionCtx.
+        ctx.host.user_tier >= 2
+    },
 );
 ```
 
