@@ -23,7 +23,7 @@ use tokio::sync::{RwLock, broadcast, mpsc};
 
 use crate::dep_graph::{DepGraph, PluginDepInfo};
 use crate::error::{InstallError, InvocationError, PersistenceError, PluginRuntimeError};
-use crate::host_functions::{self, CallCtx, make_host_functions};
+use crate::host_functions::{self, CallCtx, PluginDispatch, make_host_functions};
 use crate::manifest_extension::{ManifestExtensionHandler, OnUnknownExtension};
 use crate::trust::{TrustKey, TrustTag, compute_trust_tag};
 
@@ -561,6 +561,8 @@ pub struct PluginRuntime<HostCtx = ()> {
     pub(crate) audit_sink: Option<Arc<dyn CrossPluginAuditSink>>,
     /// Optional host policy for optional `CallPlugin` grants. `None` means allow all.
     pub(crate) grant_policy: RwLock<Option<Arc<GrantPolicyFn<HostCtx>>>>,
+    /// Shared pool registry updated by install/reload/unload. Used by dx_call_plugin.
+    pub(crate) plugin_dispatch: Arc<PluginDispatch>,
 }
 
 impl<HostCtx> PluginRuntime<HostCtx> {
@@ -1773,6 +1775,9 @@ impl<HostCtx> PluginRuntime<HostCtx> {
             granted_http_hosts,
             granted_plugin_state_reads,
             event_tx: self.event_tx.clone(),
+            plugin_dispatch: self.plugin_dispatch.clone(),
+            granted_call_plugins: std::collections::HashMap::new(), // populated after capability derivation
+            max_call_depth: self.cross_plugin_max_depth,
         };
         let user_data = extism::UserData::new(new_ctx);
         let new_ctx_arc = user_data
@@ -1926,6 +1931,17 @@ impl<HostCtx> PluginRuntime<HostCtx> {
             }
         }
 
+        // Update dispatch registry with the new pool.
+        {
+            let plugins = self.plugins.read().await;
+            if let Some(p) = plugins.get(id) {
+                self.plugin_dispatch.pools.write().await.insert(
+                    id.clone(),
+                    (p.pool.clone(), p.active_count.clone(), p.pool_size),
+                );
+            }
+        }
+
         // Step 4: broadcast after both locks are released.
         let _ = self.override_map_tx.send(new_map);
         Ok(())
@@ -1982,8 +1998,9 @@ impl<HostCtx> PluginRuntime<HostCtx> {
             regs.override_map.clone()
         };
 
-        // Remove from dep_graph after locks released.
+        // Remove from dep_graph and dispatch registry after locks released.
         self.dep_graph.write().await.remove(id);
+        self.plugin_dispatch.pools.write().await.remove(id);
 
         let _ = self.override_map_tx.send(new_map);
         Ok(())
@@ -2194,6 +2211,9 @@ impl<HostCtx> PluginRuntime<HostCtx> {
             granted_http_hosts,
             granted_plugin_state_reads,
             event_tx: self.event_tx.clone(),
+            plugin_dispatch: self.plugin_dispatch.clone(),
+            granted_call_plugins: std::collections::HashMap::new(), // updated below after grant derivation
+            max_call_depth: self.cross_plugin_max_depth,
         };
         let user_data = extism::UserData::new(ctx);
         let ctx_arc = user_data
@@ -2301,6 +2321,17 @@ impl<HostCtx> PluginRuntime<HostCtx> {
             if let Some(err) = on_load_err {
                 let _ = self.plugins.write().await.swap_remove(&plugin_id);
                 return Err(err);
+            }
+        }
+
+        // Update dispatch registry so other plugins can reach this one via dx_call_plugin.
+        {
+            let plugins = self.plugins.read().await;
+            if let Some(p) = plugins.get(&plugin_id) {
+                self.plugin_dispatch.pools.write().await.insert(
+                    plugin_id.clone(),
+                    (p.pool.clone(), p.active_count.clone(), p.pool_size),
+                );
             }
         }
 
@@ -3352,6 +3383,9 @@ impl<HostCtx> PluginRuntimeBuilder<HostCtx> {
                 }
             }
 
+            let build_dispatch = Arc::new(PluginDispatch {
+                pools: tokio::sync::RwLock::new(std::collections::HashMap::new()),
+            });
             let ctx = CallCtx {
                 caller: plugin_manifest.id.clone(),
                 session_states: session_states.clone(),
@@ -3365,6 +3399,9 @@ impl<HostCtx> PluginRuntimeBuilder<HostCtx> {
                 granted_http_hosts,
                 granted_plugin_state_reads,
                 event_tx: event_tx.clone(),
+                plugin_dispatch: build_dispatch, // replaced post-build with shared dispatch
+                granted_call_plugins: std::collections::HashMap::new(),
+                max_call_depth: self.cross_plugin_max_depth,
             };
             let user_data = extism::UserData::new(ctx);
             let ctx_arc = user_data
@@ -3517,6 +3554,8 @@ impl<HostCtx> PluginRuntimeBuilder<HostCtx> {
             PluginRuntime::<HostCtx>::build_registries(&all_plugins, self.plugin_page_prefix.as_deref())?;
         let (override_map_tx, _) = broadcast::channel::<OverrideMap>(32);
 
+        let plugin_dispatch = PluginDispatch::new();
+
         let runtime = Arc::new(PluginRuntime {
             plugins: RwLock::new(all_plugins),
             global_states,
@@ -3541,7 +3580,16 @@ impl<HostCtx> PluginRuntimeBuilder<HostCtx> {
             cross_plugin_max_depth: self.cross_plugin_max_depth,
             audit_sink: self.audit_sink,
             grant_policy: RwLock::new(self.grant_policy),
+            plugin_dispatch: plugin_dispatch.clone(),
         });
+
+        // Populate the dispatch registry from all loaded plugins.
+        {
+            let mut pools = plugin_dispatch.pools.write().await;
+            for (id, loaded) in runtime.plugins.read().await.iter() {
+                pools.insert(id.clone(), (loaded.pool.clone(), loaded.active_count.clone(), loaded.pool_size));
+            }
+        }
 
         // Event dispatch task: receives plugin-emitted events and fans them out.
         {
@@ -3586,6 +3634,24 @@ impl<HostCtx> PluginRuntimeBuilder<HostCtx> {
 
         Ok(runtime)
     }
+}
+
+/// Extract `granted_call_plugins` map from a list of `HostCapability` values.
+///
+/// Used when constructing `CallCtx` so `dx_call_plugin` can check capabilities inline.
+pub(crate) fn call_plugin_map(
+    capabilities: &[HostCapability],
+) -> std::collections::HashMap<PluginId, std::collections::HashSet<String>> {
+    let mut map: std::collections::HashMap<PluginId, std::collections::HashSet<String>> =
+        std::collections::HashMap::new();
+    for cap in capabilities {
+        if let HostCapability::CallPlugin { target_plugin_id, allowed_functions } = cap {
+            map.entry(target_plugin_id.clone())
+                .or_default()
+                .extend(allowed_functions.iter().cloned());
+        }
+    }
+    map
 }
 
 /// Build a `GrantRequest` and `GrantDecision` for the optional deps of a plugin.
@@ -4146,6 +4212,9 @@ mod tests {
             granted_http_hosts: Default::default(),
             granted_plugin_state_reads: Default::default(),
             event_tx: runtime.event_tx.clone(),
+            plugin_dispatch: runtime.plugin_dispatch.clone(),
+            granted_call_plugins: Default::default(),
+            max_call_depth: 32,
         };
         let user_data = extism::UserData::new(ctx);
         let ctx_arc = user_data.get().expect("ctx_arc");

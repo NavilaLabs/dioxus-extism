@@ -11,6 +11,7 @@ mod trust;
 pub mod tree;
 
 pub use dep_graph::DepGraph;
+pub use host_functions::PluginDispatch;
 pub use error::{InstallError, InvocationError, PersistenceError, PluginRuntimeError};
 pub use dioxus_extism_protocol::RouteTransforms;
 pub use manifest_extension::{ManifestExtensionError, ManifestExtensionHandler, OnUnknownExtension};
