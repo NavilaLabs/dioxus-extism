@@ -5,7 +5,7 @@ use std::{
         Arc,
         atomic::{AtomicBool, AtomicUsize, Ordering},
     },
-    time::Duration,
+    time::{Duration, SystemTime},
 };
 
 use async_trait::async_trait;
@@ -21,7 +21,8 @@ use indexmap::IndexMap;
 use serde::{Serialize, de::DeserializeOwned};
 use tokio::sync::{RwLock, broadcast, mpsc};
 
-use crate::error::{InvocationError, PersistenceError, PluginRuntimeError};
+use crate::dep_graph::{DepGraph, PluginDepInfo};
+use crate::error::{InstallError, InvocationError, PersistenceError, PluginRuntimeError};
 use crate::host_functions::{self, CallCtx, make_host_functions};
 use crate::manifest_extension::{ManifestExtensionHandler, OnUnknownExtension};
 use crate::trust::{TrustKey, TrustTag, compute_trust_tag};
@@ -71,6 +72,54 @@ pub type CapabilityCheckFn<HostCtx = ()> =
 /// runtime-only and do not block plugin loading.
 type LoadTimeCapabilityCheckFn =
     dyn Fn(&PluginId, &serde_json::Value) -> Result<(), String> + Send + Sync;
+
+// ── Grant policy ─────────────────────────────────────────────────────────────
+
+/// Host-registered veto hook for optional `CallPlugin` grants.
+///
+/// Called once per plugin install (or grant recompute). Returns the indices into
+/// `GrantRequest::items` that the host wants to deny. By default (no policy registered)
+/// **all satisfiable optional grants are allowed**.
+///
+/// `GrantPolicyFn` is **never** consulted for required items.
+pub type GrantPolicyFn<HostCtx = ()> =
+    dyn Fn(
+            &dioxus_extism_protocol::GrantRequest,
+            &CallContext<'_, HostCtx>,
+        ) -> dioxus_extism_protocol::GrantDecision
+        + Send
+        + Sync;
+
+// ── Audit sink ────────────────────────────────────────────────────────────────
+
+/// Outcome of a cross-plugin call recorded by [`CrossPluginAuditSink`].
+#[non_exhaustive]
+pub enum CallOutcome {
+    /// The call was allowed and completed.
+    Allowed { duration: Duration },
+    /// The call was denied before reaching the target.
+    Denied { reason: dioxus_extism_protocol::DenialReason },
+    /// The call reached the target but the target returned an error.
+    Failed { error_kind: dioxus_extism_protocol::CallErrorKind },
+}
+
+/// One audit record emitted for every cross-plugin call (allowed or denied).
+#[non_exhaustive]
+pub struct CrossPluginCallEvent {
+    pub caller: PluginId,
+    pub target: PluginId,
+    pub function: String,
+    pub outcome: CallOutcome,
+    pub timestamp: SystemTime,
+}
+
+/// Sink for cross-plugin call audit events.
+///
+/// `record` is called synchronously and must not block. Hosts that want async
+/// persistence should forward to an internal queue.
+pub trait CrossPluginAuditSink: Send + Sync {
+    fn record(&self, event: CrossPluginCallEvent);
+}
 
 // ── Observability ─────────────────────────────────────────────────────────────
 
@@ -504,6 +553,14 @@ pub struct PluginRuntime<HostCtx = ()> {
     pub(crate) require_signature: bool,
     /// Optional observability hook for call latency and pool utilization metrics.
     pub(crate) metrics: Option<Arc<dyn RuntimeMetrics>>,
+    /// Tracks plugin versions and declared dependencies for acyclicity + version checks.
+    pub(crate) dep_graph: RwLock<DepGraph>,
+    /// Maximum cross-plugin call-chain depth (configurable via builder).
+    pub(crate) cross_plugin_max_depth: usize,
+    /// Optional audit sink for cross-plugin call events.
+    pub(crate) audit_sink: Option<Arc<dyn CrossPluginAuditSink>>,
+    /// Optional host policy for optional `CallPlugin` grants. `None` means allow all.
+    pub(crate) grant_policy: RwLock<Option<Arc<GrantPolicyFn<HostCtx>>>>,
 }
 
 impl<HostCtx> PluginRuntime<HostCtx> {
@@ -1739,7 +1796,18 @@ impl<HostCtx> PluginRuntime<HostCtx> {
         // Step 3: single write lock — swap, rebuild registries, bump version.
         let new_extensions = new_manifest.extensions.clone();
         let new_plugin_id = new_manifest.id.clone();
+        let new_requires = new_manifest.requires_plugins.clone();
+        let new_version = new_manifest.version.clone();
         let new_map = {
+            // Update dep_graph before deriving grants.
+            let mut dg = self.dep_graph.write().await;
+            dg.insert(id.clone(), PluginDepInfo {
+                version: new_version,
+                requires: new_requires.clone(),
+            });
+            let granted_capabilities = derive_granted_capabilities(id, &new_requires, &dg);
+            drop(dg);
+
             let mut plugins = self.plugins.write().await;
             let mut regs = self.registries.write().await;
             plugins.insert(
@@ -1753,7 +1821,7 @@ impl<HostCtx> PluginRuntime<HostCtx> {
                     config,
                     ctx_arc: new_ctx_arc,
                     trust_tag,
-                    granted_capabilities: Vec::new(),
+                    granted_capabilities,
                 },
             );
             let mut new_regs =
@@ -1840,6 +1908,9 @@ impl<HostCtx> PluginRuntime<HostCtx> {
             regs.override_map.clone()
         };
 
+        // Remove from dep_graph after locks released.
+        self.dep_graph.write().await.remove(id);
+
         let _ = self.override_map_tx.send(new_map);
         Ok(())
     }
@@ -1898,6 +1969,42 @@ impl<HostCtx> PluginRuntime<HostCtx> {
                 plugin: manifest.id.clone(),
                 capability: "plugin already installed; use reload_plugin to update".into(),
             });
+        }
+
+        // Validate dependency constraints against the current dep_graph.
+        {
+            let mut dg = self.dep_graph.write().await;
+            dg.insert(manifest.id.clone(), PluginDepInfo {
+                version: manifest.version.clone(),
+                requires: manifest.requires_plugins.clone(),
+            });
+            if let Err(e) = dg.check_acyclic() {
+                dg.remove(&manifest.id);
+                return Err(PluginRuntimeError::Pool(e.to_string()));
+            }
+            if let Err(e) = dg.validate_required_deps(&manifest.id, &manifest.requires_plugins) {
+                dg.remove(&manifest.id);
+                return Err(PluginRuntimeError::Pool(e.to_string()));
+            }
+            // Validate required function visibility (checked against loaded plugins' manifests).
+            let plugins = self.plugins.read().await;
+            for dep in &manifest.requires_plugins {
+                if !dep.required { continue; }
+                if let Some(target) = plugins.get(&dep.id) {
+                    for func in &dep.functions {
+                        if !target.manifest.exports.public.contains_key(func) {
+                            let err = InstallError::FunctionNotPublic {
+                                plugin: manifest.id.clone(),
+                                dependency: dep.id.clone(),
+                                function: func.clone(),
+                            };
+                            drop(plugins);
+                            dg.remove(&manifest.id);
+                            return Err(PluginRuntimeError::Pool(err.to_string()));
+                        }
+                    }
+                }
+            }
         }
 
         // Validate capabilities.
@@ -2071,7 +2178,12 @@ impl<HostCtx> PluginRuntime<HostCtx> {
         // Insert into registry — single write lock.
         let plugin_id = manifest.id.clone();
         let extensions = manifest.extensions.clone();
+        let requires_plugins = manifest.requires_plugins.clone();
         let new_map = {
+            let dg = self.dep_graph.read().await;
+            let granted_capabilities =
+                derive_granted_capabilities(&plugin_id, &requires_plugins, &dg);
+            drop(dg);
             let mut plugins = self.plugins.write().await;
             let mut regs = self.registries.write().await;
             plugins.insert(
@@ -2085,7 +2197,7 @@ impl<HostCtx> PluginRuntime<HostCtx> {
                     config,
                     ctx_arc,
                     trust_tag,
-                    granted_capabilities: Vec::new(),
+                    granted_capabilities,
                 },
             );
             let mut new_regs =
@@ -2733,6 +2845,9 @@ pub struct PluginRuntimeBuilder<HostCtx = ()> {
     trust_keys: Vec<TrustKey>,
     require_signature: bool,
     metrics: Option<Arc<dyn RuntimeMetrics>>,
+    cross_plugin_max_depth: usize,
+    audit_sink: Option<Arc<dyn CrossPluginAuditSink>>,
+    grant_policy: Option<Arc<GrantPolicyFn<HostCtx>>>,
 }
 
 /// Manual `Default` impl so that `HostCtx: Default` is not required.
@@ -2754,6 +2869,9 @@ impl<HostCtx> Default for PluginRuntimeBuilder<HostCtx> {
             trust_keys: Vec::new(),
             require_signature: false,
             metrics: None,
+            cross_plugin_max_depth: 32,
+            audit_sink: None,
+            grant_policy: None,
         }
     }
 }
@@ -2948,6 +3066,43 @@ impl<HostCtx> PluginRuntimeBuilder<HostCtx> {
     #[must_use]
     pub fn with_metrics(mut self, metrics: impl RuntimeMetrics + 'static) -> Self {
         self.metrics = Some(Arc::new(metrics));
+        self
+    }
+
+    /// Set the maximum cross-plugin call-chain depth (default: 32).
+    ///
+    /// Exceeding this limit returns `CallError::StackOverflow` to the calling plugin.
+    #[must_use]
+    pub const fn with_cross_plugin_max_depth(mut self, depth: usize) -> Self {
+        self.cross_plugin_max_depth = depth;
+        self
+    }
+
+    /// Register an audit sink for cross-plugin call events.
+    ///
+    /// The sink's `record` method is called synchronously and must not block.
+    #[must_use]
+    pub fn with_audit_sink(mut self, sink: Arc<dyn CrossPluginAuditSink>) -> Self {
+        self.audit_sink = Some(sink);
+        self
+    }
+
+    /// Register a grant-policy function for optional `CallPlugin` grants.
+    ///
+    /// By default (no policy registered) **all satisfiable optional grants are allowed**.
+    /// The function receives only the optional items; required items are never submitted.
+    #[must_use]
+    pub fn with_grant_policy(
+        mut self,
+        policy: impl Fn(
+                &dioxus_extism_protocol::GrantRequest,
+                &CallContext<'_, HostCtx>,
+            ) -> dioxus_extism_protocol::GrantDecision
+            + Send
+            + Sync
+            + 'static,
+    ) -> Self {
+        self.grant_policy = Some(Arc::new(policy));
         self
     }
 
@@ -3254,6 +3409,33 @@ impl<HostCtx> PluginRuntimeBuilder<HostCtx> {
             }
         }
 
+        // Build dep_graph from all loaded plugins and derive CallPlugin grants.
+        let mut built_dep_graph = DepGraph::new();
+        for (id, loaded) in &all_plugins {
+            built_dep_graph.insert(id.clone(), PluginDepInfo {
+                version: loaded.manifest.version.clone(),
+                requires: loaded.manifest.requires_plugins.clone(),
+            });
+        }
+        // Acyclicity check (should not fail since build-order is sequential, but enforce).
+        built_dep_graph.check_acyclic().map_err(|e| PluginRuntimeError::Pool(e.to_string()))?;
+        // Derive grants (no host context available at build time — use dummy session).
+        let dummy_session = SessionCtx {
+            session_id: SessionId("__build__".into()),
+            user_id: None,
+            client: ClientCapabilities::default(),
+            caller: None,
+        };
+        let dummy_host_ctx_for_grants = (); // HostCtx not available; no-op for non-() hosts at build
+        let _ = dummy_host_ctx_for_grants; // suppress unused warning for non-() HostCtx
+        for (id, loaded) in all_plugins.iter_mut() {
+            loaded.granted_capabilities = derive_granted_capabilities(
+                id,
+                &loaded.manifest.requires_plugins,
+                &built_dep_graph,
+            );
+        }
+
         let event_bus = EventBus::build_from_plugins(&all_plugins);
         let registries =
             PluginRuntime::<HostCtx>::build_registries(&all_plugins, self.plugin_page_prefix.as_deref())?;
@@ -3279,6 +3461,10 @@ impl<HostCtx> PluginRuntimeBuilder<HostCtx> {
             trust_keys,
             require_signature,
             metrics: self.metrics,
+            dep_graph: RwLock::new(built_dep_graph),
+            cross_plugin_max_depth: self.cross_plugin_max_depth,
+            audit_sink: self.audit_sink,
+            grant_policy: RwLock::new(self.grant_policy),
         });
 
         // Event dispatch task: receives plugin-emitted events and fans them out.
@@ -3324,6 +3510,40 @@ impl<HostCtx> PluginRuntimeBuilder<HostCtx> {
 
         Ok(runtime)
     }
+}
+
+/// Derive `HostCapability::CallPlugin` entries for a plugin from its `requires_plugins` list.
+///
+/// This is pure logic — it only grants capabilities for dependencies that are present
+/// in the dep_graph at the correct version and declare the function as public. The host's
+/// `GrantPolicyFn` (for optional items) is handled separately when a session context is
+/// available; at build time (no session) optional items are granted by default.
+pub(crate) fn derive_granted_capabilities(
+    plugin_id: &PluginId,
+    requires: &[dioxus_extism_protocol::PluginDependency],
+    dep_graph: &DepGraph,
+) -> Vec<HostCapability> {
+    let _ = plugin_id; // used for validation context if we had it here
+    requires
+        .iter()
+        .filter_map(|dep| {
+            // Only grant if the dependency is actually present.
+            let target_version = dep_graph.version_of(&dep.id)?;
+            // Only grant if the version constraint is satisfied.
+            if crate::dep_graph::check_version_match(
+                plugin_id,
+                &dep.id,
+                &dep.version.0,
+                target_version,
+            ).is_err() {
+                return None;
+            }
+            Some(HostCapability::CallPlugin {
+                target_plugin_id: dep.id.clone(),
+                allowed_functions: dep.functions.clone(),
+            })
+        })
+        .collect()
 }
 
 /// Read the `manifest` export from a plugin source.

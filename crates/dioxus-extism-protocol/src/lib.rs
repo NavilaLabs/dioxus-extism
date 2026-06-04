@@ -219,6 +219,11 @@ pub enum HostCapability {
     Http { allowed_hosts: Vec<String> },
     GlobalStateRead { keys: Vec<String> },
     GlobalStateWrite { keys: Vec<String> },
+    /// Read another plugin's per-session state entries.
+    ///
+    /// Deprecated in favour of cross-plugin function calls — use `CallPlugin` instead.
+    /// Retained for backward compatibility; existing plugins continue to work.
+    #[deprecated(note = "use CallPlugin (requires_plugins) instead")]
     ReadPluginState { plugin_id: PluginId, keys: Vec<String> },
     /// Request permission to call named host-side invocations.
     Invoke { names: Vec<String> },
@@ -231,6 +236,14 @@ pub enum HostCapability {
     Custom {
         namespace: String,
         value: serde_json::Value,
+    },
+    /// Permission to call a specific public function on another plugin.
+    ///
+    /// **Never declared directly by plugin authors.** The host derives this from
+    /// `requires_plugins` declarations during install and stores it on `LoadedPlugin`.
+    CallPlugin {
+        target_plugin_id: PluginId,
+        allowed_functions: Vec<String>,
     },
 }
 
