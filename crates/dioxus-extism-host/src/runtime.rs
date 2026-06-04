@@ -586,6 +586,83 @@ impl<HostCtx> PluginRuntime<HostCtx> {
         self.plugins.read().await.get(id).map(|p| p.trust_tag.clone())
     }
 
+    /// Fire `on_grants_changed` on all plugins affected by a dependency graph change.
+    ///
+    /// Called after a plugin is uninstalled or reloaded. Identifies dependents of `changed_id`,
+    /// recomputes their grants, and invokes `on_grants_changed` (if exported) with the new status.
+    /// This is best-effort: individual failures are logged but do not abort the process.
+    async fn fire_grants_changed(&self, changed_id: &PluginId) {
+        // Collect all dependents (required + optional) of the changed plugin.
+        let dependents: Vec<PluginId> = {
+            let dg = self.dep_graph.read().await;
+            let mut ids: std::collections::HashSet<PluginId> = dg.required_dependents_of(changed_id);
+            ids.extend(dg.optional_dependents_of(changed_id));
+            ids.into_iter().collect()
+        };
+
+        for dep_id in dependents {
+            // Recompute grants for this dependent.
+            let (requires, new_caps) = {
+                let plugins = self.plugins.read().await;
+                let Some(p) = plugins.get(&dep_id) else { continue };
+                let requires = p.manifest.requires_plugins.clone();
+                let dg = self.dep_graph.read().await;
+                let caps = derive_granted_capabilities(&dep_id, &requires, &dg);
+                (requires, caps)
+            };
+            let grant_status = build_grant_status(&requires, &new_caps);
+
+            // Update stored grants.
+            if let Some(p) = self.plugins.write().await.get_mut(&dep_id) {
+                p.granted_capabilities = new_caps;
+            }
+
+            // Fire on_grants_changed if the plugin exports it.
+            let (pool, active_count, pool_size) = {
+                let plugins = self.plugins.read().await;
+                match plugins.get(&dep_id) {
+                    Some(p) if p.enabled.load(Ordering::Relaxed) => {
+                        (p.pool.clone(), p.active_count.clone(), p.pool_size)
+                    }
+                    _ => continue,
+                }
+            };
+
+            let has_export = pool
+                .function_exists("on_grants_changed", Duration::from_secs(5))
+                .unwrap_or(false);
+            if !has_export {
+                continue;
+            }
+
+            let gs = grant_status.clone();
+            let dep_id_clone = dep_id.clone();
+            let metrics = self.metrics.clone();
+            let dummy_session = SessionCtx {
+                session_id: SessionId("__grants_changed__".into()),
+                ..SessionCtx::default()
+            };
+            if let Err(e) = call_export::<GrantStatus, ()>(
+                pool,
+                dep_id_clone.clone(),
+                active_count,
+                pool_size,
+                metrics,
+                "on_grants_changed",
+                gs,
+                dummy_session,
+            )
+            .await
+            {
+                tracing::warn!(
+                    plugin = %dep_id_clone.0,
+                    error = %e,
+                    "on_grants_changed call failed (best effort)"
+                );
+            }
+        }
+    }
+
     /// Recompute `CallPlugin` grants for a plugin, applying the registered `GrantPolicyFn`.
     ///
     /// Call this after `install()` when you want the policy to vet optional grants with a
@@ -1949,6 +2026,9 @@ impl<HostCtx> PluginRuntime<HostCtx> {
             }
         }
 
+        // Notify dependents that grants may have changed after reload.
+        self.fire_grants_changed(id).await;
+
         // Step 4: broadcast after both locks are released.
         let _ = self.override_map_tx.send(new_map);
         Ok(())
@@ -2008,6 +2088,9 @@ impl<HostCtx> PluginRuntime<HostCtx> {
         // Remove from dep_graph and dispatch registry after locks released.
         self.dep_graph.write().await.remove(id);
         self.plugin_dispatch.pools.write().await.remove(id);
+
+        // Notify dependents (best effort).
+        self.fire_grants_changed(id).await;
 
         let _ = self.override_map_tx.send(new_map);
         Ok(())
