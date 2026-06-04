@@ -33,7 +33,7 @@ fn server_main() {
             let wasm_a = base.join("tree_selector_example_plugin_a.wasm");
             let wasm_b = base.join("tree_selector_example_plugin_b.wasm");
 
-            let mut builder = PluginRuntimeBuilder::new();
+            let mut builder: PluginRuntimeBuilder = PluginRuntimeBuilder::new();
             if wasm_a.exists() {
                 builder = builder.add_plugin(PluginSource::File(wasm_a));
                 tracing::info!("tree-selector plugin_a loaded");
@@ -85,7 +85,7 @@ fn FeedPage() -> Element {
             h1 { "Tree Selector Example" }
             p { "The activity feed below is composed from two plugins with zero host involvement." }
             p { "plugin_a provides the feed card. plugin_b injects a Share button inside it." }
-            PluginSlot { name: "activity-feed" }
+            PluginSlot::<()> { name: "activity-feed" }
         }
     }
 }

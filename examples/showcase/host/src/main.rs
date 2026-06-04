@@ -76,7 +76,7 @@ fn server_main() {
 
     let posts = sample_posts();
 
-    let builder = PluginRuntimeBuilder::new()
+    let builder: PluginRuntimeBuilder = PluginRuntimeBuilder::new()
         .with_plugin_page_prefix("/p")
         .register_invocation("get_posts", None, {
             let posts = posts.clone();
@@ -261,7 +261,7 @@ enum Route {
 /// ancestor `Router<Route>` in the component tree — this layout provides that.
 #[component]
 fn AppLayout() -> Element {
-    rsx! { PluginAwareRouter::<Route> {} }
+    rsx! { PluginAwareRouter::<Route, ()> {} }
 }
 
 #[component]

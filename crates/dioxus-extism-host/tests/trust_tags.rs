@@ -43,7 +43,7 @@ fn sign_bytes(pkcs8: &[u8], data: &[u8]) -> Vec<u8> {
 
 #[tokio::test]
 async fn unsigned_loads_with_verified_false() {
-    let runtime = PluginRuntimeBuilder::new()
+    let runtime = PluginRuntimeBuilder::<()>::new()
         .add_plugin(src(SLOT_NORMAL_WASM))
         .build()
         .await
@@ -62,7 +62,7 @@ async fn valid_signature_loads_with_verified_true() {
     let (pkcs8, pub_key) = generate_keypair();
     let sig = sign_bytes(&pkcs8, SLOT_NORMAL_WASM);
 
-    let runtime = PluginRuntimeBuilder::new()
+    let runtime = PluginRuntimeBuilder::<()>::new()
         .add_plugin_with_config(
             src(SLOT_NORMAL_WASM),
             PluginInstallConfig { signature: Some(sig), key_id: None, ..Default::default() },
@@ -80,7 +80,7 @@ async fn valid_signature_loads_with_verified_true() {
 
 #[tokio::test]
 async fn require_signature_rejects_unsigned() {
-    let result = PluginRuntimeBuilder::new()
+    let result = PluginRuntimeBuilder::<()>::new()
         .add_plugin(src(SLOT_NORMAL_WASM))
         .with_require_signature(true)
         .build()
@@ -99,7 +99,7 @@ async fn require_signature_rejects_tampered_sig() {
     // Flip a byte to tamper.
     sig[10] ^= 0xFF;
 
-    let result = PluginRuntimeBuilder::new()
+    let result = PluginRuntimeBuilder::<()>::new()
         .add_plugin_with_config(
             src(SLOT_NORMAL_WASM),
             PluginInstallConfig { signature: Some(sig), key_id: None, ..Default::default() },
@@ -121,7 +121,7 @@ async fn key_id_hint_selects_correct_key() {
     let (pkcs8_b, pub_b) = generate_keypair();
     let sig = sign_bytes(&pkcs8_b, SLOT_NORMAL_WASM);
 
-    let runtime = PluginRuntimeBuilder::new()
+    let runtime = PluginRuntimeBuilder::<()>::new()
         .add_plugin_with_config(
             src(SLOT_NORMAL_WASM),
             PluginInstallConfig {
@@ -150,7 +150,7 @@ async fn wrong_key_id_hint_fails_even_if_other_key_matches() {
     let (pkcs8_b, pub_b) = generate_keypair();
     let sig = sign_bytes(&pkcs8_b, SLOT_NORMAL_WASM);
 
-    let result = PluginRuntimeBuilder::new()
+    let result = PluginRuntimeBuilder::<()>::new()
         .add_plugin_with_config(
             src(SLOT_NORMAL_WASM),
             PluginInstallConfig {
@@ -183,7 +183,7 @@ async fn all_keys_tried_without_hint() {
     // Sign with the middle key.
     let sig = sign_bytes(&pkcs8_b, SLOT_NORMAL_WASM);
 
-    let runtime = PluginRuntimeBuilder::new()
+    let runtime = PluginRuntimeBuilder::<()>::new()
         .add_plugin_with_config(
             src(SLOT_NORMAL_WASM),
             PluginInstallConfig { signature: Some(sig), key_id: None, ..Default::default() },
@@ -205,7 +205,7 @@ async fn all_keys_tried_without_hint() {
 
 #[tokio::test]
 async fn plugin_trust_tag_none_for_unknown_id() {
-    let runtime = PluginRuntimeBuilder::new()
+    let runtime = PluginRuntimeBuilder::<()>::new()
         .build()
         .await
         .expect("build failed");
@@ -219,7 +219,7 @@ async fn install_verifies_trust_tag() {
     let (pkcs8, pub_key) = generate_keypair();
     let sig = sign_bytes(&pkcs8, SLOT_NORMAL_WASM);
 
-    let runtime = PluginRuntimeBuilder::new()
+    let runtime = PluginRuntimeBuilder::<()>::new()
         .with_trust_key("install-key", pub_key)
         .build()
         .await

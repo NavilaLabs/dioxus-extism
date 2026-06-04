@@ -19,9 +19,9 @@ fn test_session() -> SessionCtx {
 
 #[tokio::test]
 async fn empty_runtime_returns_empty_transforms() {
-    let runtime = PluginRuntimeBuilder::new().build().await.expect("runtime build");
+    let runtime = PluginRuntimeBuilder::<()>::new().build().await.expect("runtime build");
     let result = runtime
-        .render_route_transforms("/product/42", &test_session())
+        .render_route_transforms("/product/42", &test_session(), &())
         .await
         .expect("render_route_transforms");
     assert!(result.is_empty());
@@ -29,9 +29,9 @@ async fn empty_runtime_returns_empty_transforms() {
 
 #[tokio::test]
 async fn unmatched_path_returns_empty_transforms() {
-    let runtime = PluginRuntimeBuilder::new().build().await.expect("runtime build");
+    let runtime = PluginRuntimeBuilder::<()>::new().build().await.expect("runtime build");
     let result = runtime
-        .render_route_transforms("/no/plugin/here", &test_session())
+        .render_route_transforms("/no/plugin/here", &test_session(), &())
         .await
         .expect("render_route_transforms");
     assert!(!result.has_wrap());
@@ -41,7 +41,7 @@ async fn unmatched_path_returns_empty_transforms() {
 
 #[tokio::test]
 async fn run_hook_no_handlers_returns_passed_with_original_context() {
-    let runtime = PluginRuntimeBuilder::new().build().await.expect("runtime build");
+    let runtime = PluginRuntimeBuilder::<()>::new().build().await.expect("runtime build");
     let ctx = serde_json::json!({"value": 42});
     let outcome = runtime
         .run_hook("unregistered-hook", ctx.clone(), &test_session())
@@ -55,7 +55,7 @@ async fn run_hook_no_handlers_returns_passed_with_original_context() {
 
 #[tokio::test]
 async fn apply_tree_transforms_no_within_returns_view_unchanged() {
-    let runtime = PluginRuntimeBuilder::new().build().await.expect("runtime build");
+    let runtime = PluginRuntimeBuilder::<()>::new().build().await.expect("runtime build");
     let original_view = PluginView::Text("unchanged".into());
     let context = TransformContext::default();
     let result = runtime

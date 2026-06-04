@@ -4,7 +4,8 @@
 
 `dioxus-extism` is a Rust workspace that extends Dioxus fullstack applications with
 Extism WASM plugins. Plugins run server-side only, describe their UI as a serialisable
-`PluginView` tree, and the host Dioxus frontend renders it.
+`PluginView` tree, and the host Dioxus frontend renders it. dioxus-extism is host-agnostic
+by design.
 
 Architecture document: `dioxus-extism-architecture.md` — read this fully before writing
 any code. Task files for each phase are in `tasks/`.

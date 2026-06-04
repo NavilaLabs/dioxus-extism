@@ -76,6 +76,8 @@ keyring       = "3"
 fd-lock       = "4"
 trybuild      = "1"
 async-stream  = "0.3"
+semver        = { version = "1", features = ["serde"] }
+toml          = "0.8"
 criterion     = { version = "0.5", features = ["async_tokio"] }
 
 [workspace.lints.clippy]

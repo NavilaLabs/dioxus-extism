@@ -175,6 +175,14 @@ pub struct PluginManifest {
     /// the value is opaque JSON owned entirely by the host.
     #[serde(default)]
     pub extensions: BTreeMap<String, serde_json::Value>,
+    /// Functions this plugin makes available for other plugins to call.
+    ///
+    /// Functions not listed here are private (host-only) by default.
+    #[serde(default)]
+    pub exports: ExportsManifest,
+    /// Other plugins this plugin depends on for cross-plugin calls.
+    #[serde(default)]
+    pub requires_plugins: Vec<PluginDependency>,
 }
 
 /// State scope declared by a plugin in its manifest.
@@ -211,6 +219,11 @@ pub enum HostCapability {
     Http { allowed_hosts: Vec<String> },
     GlobalStateRead { keys: Vec<String> },
     GlobalStateWrite { keys: Vec<String> },
+    /// Read another plugin's per-session state entries.
+    ///
+    /// Deprecated in favour of cross-plugin function calls — use `CallPlugin` instead.
+    /// Retained for backward compatibility; existing plugins continue to work.
+    #[deprecated(note = "use CallPlugin (requires_plugins) instead")]
     ReadPluginState { plugin_id: PluginId, keys: Vec<String> },
     /// Request permission to call named host-side invocations.
     Invoke { names: Vec<String> },
@@ -223,6 +236,14 @@ pub enum HostCapability {
     Custom {
         namespace: String,
         value: serde_json::Value,
+    },
+    /// Permission to call a specific public function on another plugin.
+    ///
+    /// **Never declared directly by plugin authors.** The host derives this from
+    /// `requires_plugins` declarations during install and stores it on `LoadedPlugin`.
+    CallPlugin {
+        target_plugin_id: PluginId,
+        allowed_functions: Vec<String>,
     },
 }
 
@@ -496,6 +517,65 @@ pub struct ViewUpdate {
     pub events: Vec<PluginEvent>,
 }
 
+// ── Plugin init context ───────────────────────────────────────────────────────
+
+/// Payload sent to a plugin's `on_load` export at initialisation time.
+///
+/// Uses `#[serde(flatten)]` on `session` so existing plugins receiving `Json<SessionCtx>`
+/// on their `on_load` export continue to work — serde ignores the new `grants` field.
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct PluginInitContext {
+    /// Session context (flattened so the struct is backward-compatible with SessionCtx).
+    #[serde(flatten)]
+    pub session: SessionCtx,
+    /// Cross-plugin grants resolved at install time.
+    #[serde(default)]
+    pub grants: GrantStatus,
+}
+
+// ── Call context ─────────────────────────────────────────────────────────────
+
+/// Combined per-call context handed to host callbacks at every runtime decision point.
+///
+/// `session` is populated by dioxus-extism and carries library-owned per-call metadata.
+/// `host` is populated by the host application and is fully opaque to dioxus-extism;
+/// the library never reads, serialises, logs, or compares `HostCtx` values.
+///
+/// Callbacks receive `&CallContext<HostCtx>`. The host can read both fields:
+///
+/// ```rust,ignore
+/// runtime.with_route_replace_policy_ctx(|plugin_id, route, ctx| {
+///     let session_id = &ctx.session.session_id;   // dioxus-extism-owned
+///     host_policy_decide(plugin_id, route, ctx.host) // host-owned
+/// });
+/// ```
+///
+/// `CallContext` is `#[non_exhaustive]` so future dioxus-extism-owned fields
+/// can be added without breaking host callbacks.
+#[non_exhaustive]
+pub struct CallContext<'a, HostCtx> {
+    /// dioxus-extism-owned per-call metadata (session id, client capabilities, caller plugin).
+    pub session: &'a SessionCtx,
+    /// Host-provided per-call context — opaque to dioxus-extism.
+    pub host: &'a HostCtx,
+}
+
+impl<'a, HostCtx> CallContext<'a, HostCtx> {
+    /// Construct a `CallContext` from its two constituent references.
+    pub fn new(session: &'a SessionCtx, host: &'a HostCtx) -> Self {
+        Self { session, host }
+    }
+}
+
+impl<'a, HostCtx: std::fmt::Debug> std::fmt::Debug for CallContext<'a, HostCtx> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("CallContext")
+            .field("session", self.session)
+            .field("host", self.host)
+            .finish()
+    }
+}
+
 // ── Session context and override map ────────────────────────────────────────
 
 /// Session and caller context threaded through every plugin call.
@@ -738,6 +818,179 @@ pub struct ApiResponse {
 impl Default for ApiResponse {
     fn default() -> Self {
         Self { status: 200, headers: HashMap::new(), body: None }
+    }
+}
+
+// ── Plugin-to-plugin interaction types ───────────────────────────────────────
+
+/// A semver constraint string such as `"^1.2"` or `">=1.0, <2.0"`.
+///
+/// Stored as a plain `String` in the protocol crate; semver parsing is done in
+/// `dioxus-extism-host` using the `semver` crate.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
+pub struct VersionRange(pub String);
+
+impl<S: Into<String>> From<S> for VersionRange {
+    fn from(s: S) -> Self {
+        Self(s.into())
+    }
+}
+
+/// Declares a single plugin function as callable by other plugins.
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[non_exhaustive]
+pub struct PublicFunctionDecl {
+    /// Optional description shown in tooling / diagnostics.
+    pub description: Option<String>,
+}
+
+/// Maps public export names to their declarations.
+///
+/// Functions not listed here are private (host-only) by default.
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct ExportsManifest {
+    pub public: BTreeMap<String, PublicFunctionDecl>,
+}
+
+/// One plugin dependency declared in a plugin's manifest.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[non_exhaustive]
+pub struct PluginDependency {
+    /// The plugin this plugin depends on.
+    pub id: PluginId,
+    /// Semver constraint the target must satisfy.
+    pub version: VersionRange,
+    /// If `true`, install fails when the dependency is absent or incompatible.
+    /// If `false`, the dependency is optional and the plugin degrades gracefully.
+    pub required: bool,
+    /// The target plugin's public functions this plugin intends to call.
+    pub functions: Vec<String>,
+}
+
+impl PluginDependency {
+    /// Construct a dependency declaration.
+    pub fn new(
+        id: impl Into<String>,
+        version: impl Into<String>,
+        required: bool,
+        functions: Vec<String>,
+    ) -> Self {
+        Self {
+            id: PluginId(id.into()),
+            version: VersionRange(version.into()),
+            required,
+            functions,
+        }
+    }
+}
+
+/// Reason a `CallPlugin` grant was denied.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[non_exhaustive]
+pub enum DenialReason {
+    /// The target plugin is not loaded.
+    TargetUnavailable,
+    /// The target plugin is loaded at an incompatible version.
+    TargetVersionMismatch,
+    /// The requested function exists but is not declared public by the target.
+    FunctionNotPublic,
+    /// The host's `GrantPolicyFn` vetoed the optional grant.
+    HostPolicyVeto,
+}
+
+/// Which type of cross-plugin capability is being queried or granted.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[non_exhaustive]
+pub enum CapabilityKind {
+    /// Permission to call a named function on another plugin.
+    CallPlugin,
+}
+
+/// One item in a grant request, for a single `(plugin, function)` pair.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct GrantRequestItem {
+    pub kind: CapabilityKind,
+    pub target_plugin: PluginId,
+    pub function: String,
+    /// Whether the target plugin is loaded and the function is public.
+    pub satisfiable: bool,
+}
+
+/// Submitted to the host's `GrantPolicyFn` for optional grants.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct GrantRequest {
+    /// The plugin requesting the grants.
+    pub plugin_id: PluginId,
+    /// Only optional items are included.
+    pub items: Vec<GrantRequestItem>,
+}
+
+/// Returned by the host's `GrantPolicyFn`. Indices reference `GrantRequest::items`.
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct GrantDecision {
+    /// Indices into `GrantRequest::items` that the host denies.
+    pub denied: Vec<usize>,
+}
+
+/// One resolved `CallPlugin` grant received by a plugin at `on_load`.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CallPluginGrant {
+    pub target_plugin: PluginId,
+    pub function: String,
+    /// Mirrors the manifest declaration.
+    pub required: bool,
+    /// `true` if the grant is usable. `false` only for optional items that were denied.
+    pub granted: bool,
+    pub denial_reason: Option<DenialReason>,
+}
+
+/// Cross-plugin grant state delivered to the plugin at `on_load` and `on_grants_changed`.
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct GrantStatus {
+    pub call_plugin: Vec<CallPluginGrant>,
+}
+
+/// Error type for cross-plugin call failures. Serialised over the WASM boundary.
+#[derive(Debug, Clone, Serialize, Deserialize, thiserror::Error)]
+#[non_exhaustive]
+pub enum CallError {
+    #[error("permission denied")]
+    PermissionDenied,
+    #[error("target plugin unavailable")]
+    TargetUnavailable,
+    #[error("target plugin version mismatch")]
+    TargetVersionMismatch,
+    #[error("target function not public")]
+    FunctionNotPublic,
+    #[error("cross-plugin call stack overflow (max depth exceeded)")]
+    StackOverflow,
+    #[error("deserialisation error")]
+    DeserializationError,
+    #[error("host policy veto")]
+    HostPolicyVeto,
+}
+
+/// Coarse error kind for audit events (no sensitive detail).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[non_exhaustive]
+pub enum CallErrorKind {
+    PermissionDenied,
+    TargetUnavailable,
+    StackOverflow,
+    DeserializationError,
+    Other,
+}
+
+impl From<&CallError> for CallErrorKind {
+    fn from(e: &CallError) -> Self {
+        match e {
+            CallError::PermissionDenied | CallError::FunctionNotPublic | CallError::HostPolicyVeto => {
+                Self::PermissionDenied
+            }
+            CallError::TargetUnavailable | CallError::TargetVersionMismatch => Self::TargetUnavailable,
+            CallError::StackOverflow => Self::StackOverflow,
+            CallError::DeserializationError => Self::DeserializationError,
+        }
     }
 }
 

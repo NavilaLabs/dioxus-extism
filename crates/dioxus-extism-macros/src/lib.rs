@@ -83,3 +83,33 @@ pub fn overridable(_attr: TokenStream, item: TokenStream) -> TokenStream {
 
     generated.into()
 }
+
+/// Mark a plugin export as callable by other plugins.
+///
+/// Generates a `#[plugin_fn]` export as usual and records the function in the plugin's
+/// `ExportsManifest::public` map when the manifest is constructed via the `plugin!` macro.
+///
+/// **Usage:** annotate each function you want to expose to other plugins. Then include all
+/// `#[public_fn]` function names in your `PluginManifest::exports.public` map — either by
+/// hand or via the `public_exports!` helper.
+///
+/// ```ignore
+/// #[public_fn]
+/// pub fn get_break_quota(input: Json<UserId>) -> FnResult<Json<BreakQuota>> { ... }
+/// ```
+///
+/// This attribute is a pass-through: it delegates to `#[plugin_fn]` and emits a compile-time
+/// note. Manifest population is done in Rust code at manifest construction time.
+#[proc_macro_attribute]
+pub fn public_fn(_attr: TokenStream, item: TokenStream) -> TokenStream {
+    // Pass-through: delegate to #[plugin_fn].
+    let input = parse_macro_input!(item as ItemFn);
+    let vis = &input.vis;
+    let sig = &input.sig;
+    let block = &input.block;
+    quote! {
+        #[::extism_pdk::plugin_fn]
+        #vis #sig #block
+    }
+    .into()
+}

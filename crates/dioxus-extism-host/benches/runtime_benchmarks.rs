@@ -75,7 +75,7 @@ fn bench_runtime_build(c: &mut Criterion) {
         let sources: Vec<&'static [u8]> = sources.to_vec();
         group.bench_function(*label, |b| {
             b.to_async(&rt).iter(|| async {
-                let mut builder = PluginRuntimeBuilder::new();
+                let mut builder = PluginRuntimeBuilder::<()>::new();
                 for s in &sources {
                     builder = builder.add_plugin(src(s));
                 }
@@ -93,14 +93,14 @@ fn bench_slot_render(c: &mut Criterion) {
     let rt = Runtime::new().expect("tokio runtime");
 
     let runtime_1 = rt.block_on(
-        PluginRuntimeBuilder::new()
+        PluginRuntimeBuilder::<()>::new()
             .add_plugin(src(SLOT_NORMAL))
             .build(),
     )
     .expect("build 1_plugin runtime");
 
     let runtime_2 = rt.block_on(
-        PluginRuntimeBuilder::new()
+        PluginRuntimeBuilder::<()>::new()
             .add_plugin(src(SLOT_NORMAL))
             .add_plugin(PluginSource::Bytes(std::borrow::Cow::Borrowed(SLOT_HIGH)))
             .build(),
@@ -161,7 +161,7 @@ fn bench_hook_chain(c: &mut Criterion) {
 
     let runtime_1 = rt
         .block_on(
-            PluginRuntimeBuilder::new()
+            PluginRuntimeBuilder::<()>::new()
                 .add_plugin(src(HOOK_CONTINUE))
                 .build(),
         )
@@ -169,7 +169,7 @@ fn bench_hook_chain(c: &mut Criterion) {
 
     let runtime_2 = rt
         .block_on(
-            PluginRuntimeBuilder::new()
+            PluginRuntimeBuilder::<()>::new()
                 .add_plugin(src(HOOK_CONTINUE))
                 .add_plugin(src(HOOK_REPLACE))
                 .build(),
@@ -214,7 +214,7 @@ fn bench_call_plugin(c: &mut Criterion) {
 
     let runtime = tokio_rt
         .block_on(
-            PluginRuntimeBuilder::new()
+            PluginRuntimeBuilder::<()>::new()
                 .add_plugin(src(ECHO_FN))
                 .build(),
         )
@@ -239,7 +239,7 @@ fn bench_call_plugin(c: &mut Criterion) {
                 let input = input.clone();
                 async move {
                     plugin_rt
-                        .call_plugin::<_, serde_json::Value>(&id, "echo_fn", &input, &s)
+                        .call_plugin::<_, serde_json::Value>(&id, "echo_fn", &input, &s, &())
                         .await
                         .expect("call_plugin")
                 }
@@ -257,7 +257,7 @@ fn bench_metrics_overhead(c: &mut Criterion) {
 
     let runtime_no_metrics = tokio_rt
         .block_on(
-            PluginRuntimeBuilder::new()
+            PluginRuntimeBuilder::<()>::new()
                 .add_plugin(src(SLOT_NORMAL))
                 .build(),
         )
@@ -265,7 +265,7 @@ fn bench_metrics_overhead(c: &mut Criterion) {
 
     let runtime_noop = tokio_rt
         .block_on(
-            PluginRuntimeBuilder::new()
+            PluginRuntimeBuilder::<()>::new()
                 .add_plugin(src(SLOT_NORMAL))
                 .with_metrics(NoopMetrics)
                 .build(),
@@ -305,7 +305,7 @@ fn bench_registry_lookup(c: &mut Criterion) {
 
     let runtime_1 = tokio_rt
         .block_on(
-            PluginRuntimeBuilder::new()
+            PluginRuntimeBuilder::<()>::new()
                 .add_plugin(src(SLOT_NORMAL))
                 .build(),
         )
@@ -313,7 +313,7 @@ fn bench_registry_lookup(c: &mut Criterion) {
 
     let runtime_2 = tokio_rt
         .block_on(
-            PluginRuntimeBuilder::new()
+            PluginRuntimeBuilder::<()>::new()
                 .add_plugin(src(SLOT_NORMAL))
                 .add_plugin(src(SLOT_HIGH))
                 .build(),

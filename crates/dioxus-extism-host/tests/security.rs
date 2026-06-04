@@ -66,7 +66,7 @@ async fn dx_invoke_denied_when_capability_not_declared() {
     let counter = Arc::new(AtomicU32::new(0));
     let c = counter.clone();
 
-    let runtime = PluginRuntimeBuilder::new()
+    let runtime = PluginRuntimeBuilder::<()>::new()
         .add_plugin(PluginSource::Bytes(CAP_INVOKE_DENIED_WASM.into()))
         .register_invocation(
             "add_note",
@@ -97,7 +97,7 @@ async fn dx_invoke_denied_when_capability_not_declared() {
 /// After render_slot, the targeted key must not exist in global state.
 #[tokio::test]
 async fn dx_global_state_set_denied_when_capability_not_declared() {
-    let runtime = PluginRuntimeBuilder::new()
+    let runtime = PluginRuntimeBuilder::<()>::new()
         .add_plugin(PluginSource::Bytes(CAP_GLOBAL_WRITE_DENIED_WASM.into()))
         .build()
         .await
@@ -125,7 +125,7 @@ async fn dx_global_state_set_denied_when_capability_not_declared() {
 /// The owner's "data" key must still hold "secret".
 #[tokio::test]
 async fn dx_plugin_state_get_denied_for_undeclared_cross_plugin_read() {
-    let runtime = PluginRuntimeBuilder::new()
+    let runtime = PluginRuntimeBuilder::<()>::new()
         // Owner sets global state "data" = "secret" in on_load.
         .add_plugin(PluginSource::Bytes(CAP_STATE_OWNER_WASM.into()))
         // Attacker reads owner's "data" without ReadPluginState capability.
@@ -198,7 +198,7 @@ async fn sha256_integrity_check_rejects_mismatched_hash() {
     let mut bad_hash = correct_sha256;
     bad_hash[0] ^= 0xff;
 
-    let result = PluginRuntimeBuilder::new()
+    let result = PluginRuntimeBuilder::<()>::new()
         .add_plugin(PluginSource::Url {
             url: served_url.clone(),
             sha256: bad_hash,
@@ -222,7 +222,7 @@ async fn sha256_integrity_check_rejects_mismatched_hash() {
 /// is the primary security regression guard for protocol versioning.)
 #[tokio::test]
 async fn protocol_version_guard_at_build_time_rejects_future_version_plugin() {
-    let result = PluginRuntimeBuilder::new()
+    let result = PluginRuntimeBuilder::<()>::new()
         .add_plugin(PluginSource::Bytes(HIGH_PROTOCOL_VERSION_WASM.into()))
         .build()
         .await;
@@ -246,7 +246,7 @@ async fn protocol_version_guard_at_build_time_rejects_future_version_plugin() {
 /// was never entered — it must remain at zero after render_slot returns.
 #[tokio::test]
 async fn app_version_guard_fires_before_pool_call() {
-    let runtime = PluginRuntimeBuilder::new()
+    let runtime = PluginRuntimeBuilder::<()>::new()
         .add_plugin(PluginSource::Bytes(HIGH_APP_VERSION_WASM.into()))
         .build()
         .await
@@ -324,7 +324,7 @@ async fn capability_isolation_between_pool_instances() {
     let gng = get_notes_granted.clone();
     let ang = add_note_granted.clone();
 
-    let runtime = PluginRuntimeBuilder::new()
+    let runtime = PluginRuntimeBuilder::<()>::new()
         .add_plugin(PluginSource::Bytes(CAP_INVOKE_A_WASM.into()))
         .add_plugin(PluginSource::Bytes(CAP_INVOKE_B_WASM.into()))
         // get_notes: increments granted counter; any call that reaches here is granted.
@@ -391,7 +391,7 @@ async fn capability_isolation_between_pool_instances() {
 /// must be consistent; any inversion deadlocks the server under concurrent load.
 #[tokio::test]
 async fn deadlock_liveness_under_20_concurrent_renders() {
-    let runtime = PluginRuntimeBuilder::new()
+    let runtime = PluginRuntimeBuilder::<()>::new()
         .add_plugin(PluginSource::Bytes(SLOT_NORMAL_WASM.into()))
         .build()
         .await
@@ -435,14 +435,14 @@ async fn deadlock_liveness_under_20_concurrent_renders() {
 #[tokio::test]
 async fn on_load_failure_leaves_no_corrupted_global_state() {
     // First build must fail due to on_load error.
-    let bad = PluginRuntimeBuilder::new()
+    let bad = PluginRuntimeBuilder::<()>::new()
         .add_plugin(PluginSource::Bytes(FAILING_ON_LOAD_WASM.into()))
         .build()
         .await;
     assert!(bad.is_err(), "first build must fail when on_load returns an error");
 
     // Second build with a healthy plugin must succeed.
-    let good = PluginRuntimeBuilder::new()
+    let good = PluginRuntimeBuilder::<()>::new()
         .add_plugin(PluginSource::Bytes(SLOT_NORMAL_WASM.into()))
         .build()
         .await

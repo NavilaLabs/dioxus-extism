@@ -32,7 +32,7 @@ fn server_main() {
                     "target/wasm32-unknown-unknown/release/route_injection_example_plugin.wasm",
                 );
 
-            let mut builder = PluginRuntimeBuilder::new();
+            let mut builder: PluginRuntimeBuilder = PluginRuntimeBuilder::new();
             if wasm_path.exists() {
                 builder = builder.add_plugin(PluginSource::File(wasm_path));
                 tracing::info!("route-injection plugin loaded");
@@ -80,7 +80,7 @@ fn App() -> Element {
 #[component]
 fn Layout() -> Element {
     rsx! {
-        PluginAwareRouter::<Route> {}
+        PluginAwareRouter::<Route, ()> {}
     }
 }
 

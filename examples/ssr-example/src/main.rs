@@ -37,7 +37,7 @@ async fn main() {
         .join("hello-plugin/plugin")
         .join("../../target/wasm32-unknown-unknown/release/hello_plugin_plugin.wasm");
 
-    let mut builder = PluginRuntimeBuilder::new();
+    let mut builder: PluginRuntimeBuilder = PluginRuntimeBuilder::new();
     if wasm_path.exists() {
         builder = builder.add_plugin(PluginSource::File(wasm_path));
         tracing::info!("hello-plugin loaded");
@@ -72,7 +72,7 @@ async fn main() {
     // route transforms for "/" in one pass. The result is a plain data value
     // that can be passed into the synchronous SSR render step below.
     let ssr_data = runtime
-        .ssr_render_route("/", &session)
+        .ssr_render_route("/", &session, &())
         .await
         .expect("ssr_render_route failed");
 

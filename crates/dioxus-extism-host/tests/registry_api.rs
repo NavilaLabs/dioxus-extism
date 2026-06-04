@@ -59,7 +59,7 @@ fn sign_bytes(pkcs8: &[u8], data: &[u8]) -> Vec<u8> {
 
 #[tokio::test]
 async fn list_plugins_empty_runtime() {
-    let runtime = PluginRuntimeBuilder::new()
+    let runtime = PluginRuntimeBuilder::<()>::new()
         .build()
         .await
         .expect("build failed");
@@ -70,7 +70,7 @@ async fn list_plugins_empty_runtime() {
 
 #[tokio::test]
 async fn list_plugins_after_build() {
-    let runtime = PluginRuntimeBuilder::new()
+    let runtime = PluginRuntimeBuilder::<()>::new()
         .add_plugin(src(SLOT_NORMAL_WASM))
         .build()
         .await
@@ -84,7 +84,7 @@ async fn list_plugins_after_build() {
 
 #[tokio::test]
 async fn install_adds_plugin_to_list() {
-    let runtime = PluginRuntimeBuilder::new()
+    let runtime = PluginRuntimeBuilder::<()>::new()
         .build()
         .await
         .expect("build failed");
@@ -103,7 +103,7 @@ async fn install_adds_plugin_to_list() {
 
 #[tokio::test]
 async fn install_same_plugin_twice_returns_error() {
-    let runtime = PluginRuntimeBuilder::new()
+    let runtime = PluginRuntimeBuilder::<()>::new()
         .build()
         .await
         .expect("build failed");
@@ -125,7 +125,7 @@ async fn install_same_plugin_twice_returns_error() {
 
 #[tokio::test]
 async fn uninstall_removes_plugin() {
-    let runtime = PluginRuntimeBuilder::new()
+    let runtime = PluginRuntimeBuilder::<()>::new()
         .build()
         .await
         .expect("build failed");
@@ -143,7 +143,7 @@ async fn uninstall_removes_plugin() {
 
 #[tokio::test]
 async fn uninstall_nonexistent_returns_not_found() {
-    let runtime = PluginRuntimeBuilder::new()
+    let runtime = PluginRuntimeBuilder::<()>::new()
         .build()
         .await
         .expect("build failed");
@@ -157,7 +157,7 @@ async fn uninstall_nonexistent_returns_not_found() {
 
 #[tokio::test]
 async fn disable_makes_slot_return_incompatible() {
-    let runtime = PluginRuntimeBuilder::new()
+    let runtime = PluginRuntimeBuilder::<()>::new()
         .add_plugin(src(SLOT_NORMAL_WASM))
         .build()
         .await
@@ -177,7 +177,7 @@ async fn disable_makes_slot_return_incompatible() {
 
 #[tokio::test]
 async fn enable_restores_slot_content() {
-    let runtime = PluginRuntimeBuilder::new()
+    let runtime = PluginRuntimeBuilder::<()>::new()
         .add_plugin(src(SLOT_NORMAL_WASM))
         .build()
         .await
@@ -198,7 +198,7 @@ async fn enable_restores_slot_content() {
 
 #[tokio::test]
 async fn enable_nonexistent_returns_not_found() {
-    let runtime = PluginRuntimeBuilder::new()
+    let runtime = PluginRuntimeBuilder::<()>::new()
         .build()
         .await
         .expect("build failed");
@@ -215,7 +215,7 @@ async fn list_plugins_reflects_trust_tag() {
     let (pkcs8, pub_key) = generate_keypair();
     let sig = sign_bytes(&pkcs8, SLOT_NORMAL_WASM);
 
-    let runtime = PluginRuntimeBuilder::new()
+    let runtime = PluginRuntimeBuilder::<()>::new()
         .add_plugin_with_config(
             src(SLOT_NORMAL_WASM),
             PluginInstallConfig { signature: Some(sig), key_id: None, ..Default::default() },
@@ -233,7 +233,7 @@ async fn list_plugins_reflects_trust_tag() {
 
 #[tokio::test]
 async fn install_rejects_future_protocol_version() {
-    let runtime = PluginRuntimeBuilder::new()
+    let runtime = PluginRuntimeBuilder::<()>::new()
         .build()
         .await
         .expect("build failed");

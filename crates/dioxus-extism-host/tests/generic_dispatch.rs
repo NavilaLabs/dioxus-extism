@@ -42,7 +42,7 @@ fn echo_id() -> PluginId {
 
 #[tokio::test]
 async fn echo_fn_returns_input_unchanged() {
-    let runtime = PluginRuntimeBuilder::new()
+    let runtime = PluginRuntimeBuilder::<()>::new()
         .add_plugin(src(ECHO_FN_WASM))
         .build()
         .await
@@ -50,7 +50,7 @@ async fn echo_fn_returns_input_unchanged() {
 
     let input = serde_json::json!({"key": "value", "n": 42});
     let result: serde_json::Value = runtime
-        .call_plugin(&echo_id(), "echo_fn", &input, &default_session())
+        .call_plugin(&echo_id(), "echo_fn", &input, &default_session(), &())
         .await
         .expect("call_plugin failed");
 
@@ -59,14 +59,14 @@ async fn echo_fn_returns_input_unchanged() {
 
 #[tokio::test]
 async fn compute_fn_returns_incremented_value() {
-    let runtime = PluginRuntimeBuilder::new()
+    let runtime = PluginRuntimeBuilder::<()>::new()
         .add_plugin(src(ECHO_FN_WASM))
         .build()
         .await
         .expect("build failed");
 
     let result: serde_json::Value = runtime
-        .call_plugin(&echo_id(), "compute_fn", &serde_json::json!({"n": 41}), &default_session())
+        .call_plugin(&echo_id(), "compute_fn", &serde_json::json!({"n": 41}), &default_session(), &())
         .await
         .expect("call_plugin failed");
 
@@ -75,7 +75,7 @@ async fn compute_fn_returns_incremented_value() {
 
 #[tokio::test]
 async fn plugin_not_found_returns_error() {
-    let runtime = PluginRuntimeBuilder::new()
+    let runtime = PluginRuntimeBuilder::<()>::new()
         .build()
         .await
         .expect("empty build failed");
@@ -86,6 +86,7 @@ async fn plugin_not_found_returns_error() {
             "echo_fn",
             &serde_json::json!({}),
             &default_session(),
+            &(),
         )
         .await;
 
@@ -97,7 +98,7 @@ async fn plugin_not_found_returns_error() {
 
 #[tokio::test]
 async fn disabled_plugin_returns_error() {
-    let runtime = PluginRuntimeBuilder::new()
+    let runtime = PluginRuntimeBuilder::<()>::new()
         .add_plugin(src(ECHO_FN_WASM))
         .build()
         .await
@@ -106,7 +107,7 @@ async fn disabled_plugin_returns_error() {
     runtime.disable_plugin(&echo_id()).await.expect("disable failed");
 
     let result: Result<serde_json::Value, _> = runtime
-        .call_plugin(&echo_id(), "echo_fn", &serde_json::json!({}), &default_session())
+        .call_plugin(&echo_id(), "echo_fn", &serde_json::json!({}), &default_session(), &())
         .await;
 
     assert!(
@@ -117,14 +118,14 @@ async fn disabled_plugin_returns_error() {
 
 #[tokio::test]
 async fn unknown_export_returns_call_failed() {
-    let runtime = PluginRuntimeBuilder::new()
+    let runtime = PluginRuntimeBuilder::<()>::new()
         .add_plugin(src(ECHO_FN_WASM))
         .build()
         .await
         .expect("build failed");
 
     let result: Result<serde_json::Value, _> = runtime
-        .call_plugin(&echo_id(), "nonexistent_export", &serde_json::json!({}), &default_session())
+        .call_plugin(&echo_id(), "nonexistent_export", &serde_json::json!({}), &default_session(), &())
         .await;
 
     assert!(
@@ -141,7 +142,7 @@ async fn struct_input_round_trips_via_serde() {
         count: u32,
     }
 
-    let runtime = PluginRuntimeBuilder::new()
+    let runtime = PluginRuntimeBuilder::<()>::new()
         .add_plugin(src(ECHO_FN_WASM))
         .build()
         .await
@@ -149,7 +150,7 @@ async fn struct_input_round_trips_via_serde() {
 
     let input = serde_json::json!({"name": "test", "count": 7});
     let result: Payload = runtime
-        .call_plugin(&echo_id(), "echo_fn", &input, &default_session())
+        .call_plugin(&echo_id(), "echo_fn", &input, &default_session(), &())
         .await
         .expect("call_plugin failed");
 
@@ -159,7 +160,7 @@ async fn struct_input_round_trips_via_serde() {
 #[tokio::test]
 async fn concurrent_calls_all_succeed() {
     let runtime = Arc::new(
-        PluginRuntimeBuilder::new()
+        PluginRuntimeBuilder::<()>::new()
             .add_plugin(src(ECHO_FN_WASM))
             .build()
             .await
@@ -178,7 +179,7 @@ async fn concurrent_calls_all_succeed() {
             let input = serde_json::json!({"k": i});
             tokio::spawn(async move {
                 runtime
-                    .call_plugin::<_, serde_json::Value>(&id, "echo_fn", &input, &session)
+                    .call_plugin::<_, serde_json::Value>(&id, "echo_fn", &input, &session, &())
                     .await
             })
         })

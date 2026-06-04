@@ -122,9 +122,9 @@ impl ManifestExtensionHandler for RecordingHandler {
 #[tokio::test]
 async fn validate_called_at_build_time() {
     let (handler, validate_calls, _, _) = RecordingHandler::new();
-    let _runtime = PluginRuntimeBuilder::new()
+    let _runtime = PluginRuntimeBuilder::<()>::new()
         .add_plugin(src(WITH_EXTENSION_WASM))
-        .with_capability_check("test.cap-a", Arc::new(|_, _| Ok(())))
+        .with_capability_check("test.cap-a", |_, _| Ok(()))
         .with_manifest_extension("test.my-feature", Arc::new(handler))
         .with_on_unknown_extension(OnUnknownExtension::Ignore)
         .build()
@@ -139,9 +139,9 @@ async fn validate_called_at_build_time() {
 #[tokio::test]
 async fn on_load_called_after_successful_build() {
     let (handler, validate_calls, on_load_calls, _) = RecordingHandler::new();
-    let _runtime = PluginRuntimeBuilder::new()
+    let _runtime = PluginRuntimeBuilder::<()>::new()
         .add_plugin(src(WITH_EXTENSION_WASM))
-        .with_capability_check("test.cap-a", Arc::new(|_, _| Ok(())))
+        .with_capability_check("test.cap-a", |_, _| Ok(()))
         .with_manifest_extension("test.my-feature", Arc::new(handler))
         .with_on_unknown_extension(OnUnknownExtension::Ignore)
         .build()
@@ -156,9 +156,9 @@ async fn on_load_called_after_successful_build() {
 #[tokio::test]
 async fn validate_failure_aborts_build() {
     let handler = RecordingHandler::failing_validate("test.my-feature");
-    let result = PluginRuntimeBuilder::new()
+    let result = PluginRuntimeBuilder::<()>::new()
         .add_plugin(src(WITH_EXTENSION_WASM))
-        .with_capability_check("test.cap-a", Arc::new(|_, _| Ok(())))
+        .with_capability_check("test.cap-a", |_, _| Ok(()))
         .with_manifest_extension("test.my-feature", Arc::new(handler))
         .with_on_unknown_extension(OnUnknownExtension::Ignore)
         .build()
@@ -173,9 +173,9 @@ async fn validate_failure_aborts_build() {
 #[tokio::test]
 async fn on_load_failure_aborts_build() {
     let handler = RecordingHandler::failing_on_load();
-    let result = PluginRuntimeBuilder::new()
+    let result = PluginRuntimeBuilder::<()>::new()
         .add_plugin(src(WITH_EXTENSION_WASM))
-        .with_capability_check("test.cap-a", Arc::new(|_, _| Ok(())))
+        .with_capability_check("test.cap-a", |_, _| Ok(()))
         .with_manifest_extension("test.my-feature", Arc::new(handler))
         .with_on_unknown_extension(OnUnknownExtension::Ignore)
         .build()
@@ -190,9 +190,9 @@ async fn on_load_failure_aborts_build() {
 #[tokio::test]
 async fn on_unload_called_at_unload_time() {
     let (handler, _, _, on_unload_count) = RecordingHandler::new();
-    let runtime = PluginRuntimeBuilder::new()
+    let runtime = PluginRuntimeBuilder::<()>::new()
         .add_plugin(src(WITH_EXTENSION_WASM))
-        .with_capability_check("test.cap-a", Arc::new(|_, _| Ok(())))
+        .with_capability_check("test.cap-a", |_, _| Ok(()))
         .with_manifest_extension("test.my-feature", Arc::new(handler))
         .with_on_unknown_extension(OnUnknownExtension::Ignore)
         .build()
@@ -207,9 +207,9 @@ async fn on_unload_called_at_unload_time() {
 
 #[tokio::test]
 async fn unknown_ns_warn_loads_plugin() {
-    let result = PluginRuntimeBuilder::new()
+    let result = PluginRuntimeBuilder::<()>::new()
         .add_plugin(src(WITH_EXTENSION_WASM))
-        .with_capability_check("test.cap-a", Arc::new(|_, _| Ok(())))
+        .with_capability_check("test.cap-a", |_, _| Ok(()))
         .with_on_unknown_extension(OnUnknownExtension::Warn)
         .build()
         .await;
@@ -223,9 +223,9 @@ async fn unknown_ns_warn_loads_plugin() {
 
 #[tokio::test]
 async fn unknown_ns_error_rejects_plugin() {
-    let result = PluginRuntimeBuilder::new()
+    let result = PluginRuntimeBuilder::<()>::new()
         .add_plugin(src(WITH_EXTENSION_WASM))
-        .with_capability_check("test.cap-a", Arc::new(|_, _| Ok(())))
+        .with_capability_check("test.cap-a", |_, _| Ok(()))
         .with_on_unknown_extension(OnUnknownExtension::Error)
         .build()
         .await;
@@ -238,9 +238,9 @@ async fn unknown_ns_error_rejects_plugin() {
 
 #[tokio::test]
 async fn unknown_ns_ignore_loads_plugin() {
-    let result = PluginRuntimeBuilder::new()
+    let result = PluginRuntimeBuilder::<()>::new()
         .add_plugin(src(WITH_EXTENSION_WASM))
-        .with_capability_check("test.cap-a", Arc::new(|_, _| Ok(())))
+        .with_capability_check("test.cap-a", |_, _| Ok(()))
         .with_on_unknown_extension(OnUnknownExtension::Ignore)
         .build()
         .await;
@@ -250,7 +250,7 @@ async fn unknown_ns_ignore_loads_plugin() {
 
 #[tokio::test]
 async fn register_at_runtime_then_install() {
-    let runtime = PluginRuntimeBuilder::new()
+    let runtime = PluginRuntimeBuilder::<()>::new()
         .build()
         .await
         .expect("empty runtime build failed");
@@ -259,7 +259,7 @@ async fn register_at_runtime_then_install() {
     runtime
         .register_manifest_extension("test.my-feature", Arc::new(handler))
         .await;
-    runtime.register_capability_check("test.cap-a", Arc::new(|_, _| Ok(()))).await;
+    runtime.register_capability_check("test.cap-a", |_, _| Ok(())).await;
 
     let id = runtime
         .install(
@@ -289,9 +289,9 @@ async fn second_namespace_handler_receives_correct_value() {
         fn on_unload(&self, _: &PluginId) -> Result<(), ManifestExtensionError> { Ok(()) }
     }
 
-    let _runtime = PluginRuntimeBuilder::new()
+    let _runtime = PluginRuntimeBuilder::<()>::new()
         .add_plugin(src(WITH_EXTENSION_WASM))
-        .with_capability_check("test.cap-a", Arc::new(|_, _| Ok(())))
+        .with_capability_check("test.cap-a", |_, _| Ok(()))
         .with_manifest_extension("test.my-feature", Arc::new(RecordingHandler::new().0))
         .with_manifest_extension("test.another-ns", Arc::new(AnotherHandler(another_ns_calls_clone)))
         .build()

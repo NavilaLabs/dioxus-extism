@@ -43,13 +43,15 @@ mod view;
 pub use extism_pdk;
 
 pub use dioxus_extism_protocol::{
-    ApiRequest, ApiResponse, ApiRouteDeclaration, HttpMethod,
-    PageRouteDeclaration, PageRouteInput, PageRouteOutput,
-    AttrValue, BoundEventHandler, ClientCapabilities, DomEvent, HandlerId, HookCall, HookRegistration, HookResult,
-    HostCapability, HostComponentRef, NodeSelector, PluginEvent, PluginId, PluginManifest,
-    PluginView, PriorityHint, PROTOCOL_VERSION, RoutePattern, Selector, SessionCtx, SessionId, SlotContent,
-    SlotRegistration, StateScope, TransformDeclaration, TransformInput, TransformOp,
-    TransformOutput, ViewElement, ViewUpdate,
+    ApiRequest, ApiResponse, ApiRouteDeclaration, CallError, CallPluginGrant, CapabilityKind,
+    DenialReason, ExportsManifest, GrantDecision, GrantRequest, GrantStatus, HttpMethod,
+    PageRouteDeclaration, PageRouteInput, PageRouteOutput, PluginDependency, PluginInitContext,
+    PublicFunctionDecl, VersionRange,
+    AttrValue, BoundEventHandler, ClientCapabilities, DomEvent, HandlerId, HookCall,
+    HookRegistration, HookResult, HostCapability, HostComponentRef, NodeSelector, PluginEvent,
+    PluginId, PluginManifest, PluginView, PriorityHint, PROTOCOL_VERSION, RoutePattern, Selector,
+    SessionCtx, SessionId, SlotContent, SlotRegistration, StateScope, TransformDeclaration,
+    TransformInput, TransformOp, TransformOutput, ViewElement, ViewUpdate,
 };
 pub use error::PdkError;
 pub use view::{
@@ -404,8 +406,9 @@ macro_rules! interactions_export {
 
 /// Generate a WASM `on_load` export for an [`OnLoad`] implementation.
 ///
-/// The host calls this once per pool initialisation. If it returns an error,
-/// the plugin fails to load.
+/// The host calls this once per pool initialisation with a [`PluginInitContext`],
+/// which extends `SessionCtx` with `grants`. Existing plugins that received only
+/// `SessionCtx` continue to work due to `#[serde(flatten)]`.
 ///
 /// # Example
 /// ```ignore
@@ -416,11 +419,112 @@ macro_rules! on_load_export {
     ($plugin:ty) => {
         #[::extism_pdk::plugin_fn]
         pub fn on_load(
-            input: ::extism_pdk::Json<$crate::SessionCtx>,
+            input: ::extism_pdk::Json<$crate::PluginInitContext>,
         ) -> ::extism_pdk::FnResult<()> {
-            let ctx = $crate::PluginCtx::from_session(input.0);
+            let ctx = $crate::PluginCtx::from_session(input.0.session);
             Ok(<$plugin as $crate::OnLoad>::on_load(&ctx)
                 .map_err(|e| ::extism_pdk::Error::msg(e.to_string()))?)
+        }
+    };
+}
+
+/// Call a public function on another plugin.
+///
+/// Backed by the `dx_call_plugin` host function. Returns `Err(CallError)` if the
+/// calling plugin lacks a `CallPlugin` grant or if the target is unavailable.
+///
+/// # Errors
+/// Returns `CallError` if the capability is denied, the target is unavailable,
+/// the stack depth is exceeded, or deserialisation fails.
+pub fn call_plugin<I, O>(
+    target: &PluginId,
+    function: &str,
+    input: &I,
+) -> Result<O, CallError>
+where
+    I: serde::Serialize,
+    O: serde::de::DeserializeOwned,
+{
+    #[allow(unsafe_code)]
+    mod inner {
+        use extism_pdk::host_fn;
+        #[host_fn]
+        extern "ExtismHost" {
+            pub fn dx_call_plugin(target: &str, function: &str, input: String) -> String;
+        }
+    }
+    let input_json = serde_json::to_string(input)
+        .map_err(|_| CallError::DeserializationError)?;
+    #[allow(unsafe_code)]
+    let raw = unsafe { inner::dx_call_plugin(target.0.as_str(), function, input_json) }
+        .map_err(|_| CallError::TargetUnavailable)?;
+    // The host returns `{ "Ok": <value> }` or `{ "Err": <CallError> }`.
+    let envelope: serde_json::Value =
+        serde_json::from_str(&raw).map_err(|_| CallError::DeserializationError)?;
+    if let Some(ok) = envelope.get("Ok") {
+        serde_json::from_value(ok.clone()).map_err(|_| CallError::DeserializationError)
+    } else if let Some(err) = envelope.get("Err") {
+        let e: CallError =
+            serde_json::from_value(err.clone()).unwrap_or(CallError::DeserializationError);
+        Err(e)
+    } else {
+        Err(CallError::DeserializationError)
+    }
+}
+
+/// Check whether this plugin holds a `CallPlugin` grant for `(target, function)`.
+///
+/// Backed by `dx_is_granted`. Returns `false` on any host-function error.
+pub fn is_granted(kind: CapabilityKind, target_plugin: &PluginId, function: &str) -> bool {
+    #[allow(unsafe_code)]
+    mod inner {
+        use extism_pdk::host_fn;
+        #[host_fn]
+        extern "ExtismHost" {
+            pub fn dx_is_granted(kind: &str, target_plugin_id: &str, function: &str) -> String;
+        }
+    }
+    let kind_str = match kind {
+        CapabilityKind::CallPlugin => "CallPlugin",
+        _ => "CallPlugin",
+    };
+    #[allow(unsafe_code)]
+    let raw = unsafe { inner::dx_is_granted(kind_str, target_plugin.0.as_str(), function) };
+    raw.map(|s| serde_json::from_str::<bool>(&s).unwrap_or(false))
+        .unwrap_or(false)
+}
+
+/// Optional lifecycle trait: called when this plugin's grant set changes.
+///
+/// Implement and register with [`on_grants_changed_export!`] to react to
+/// dependency graph changes without restarting.
+pub trait OnGrantsChanged: DioxusPlugin {
+    /// # Errors
+    /// Returns `PdkError` if the handler fails.
+    fn on_grants_changed(grants: GrantStatus, ctx: &PluginCtx) -> Result<(), PdkError>;
+}
+
+/// Generate a WASM `on_grants_changed` export.
+///
+/// The host calls this when cross-plugin grants are recomputed after a dependency
+/// plugin is installed, uninstalled, or hot-reloaded.
+///
+/// # Example
+/// ```ignore
+/// on_grants_changed_export!(MyPlugin);
+/// ```
+#[macro_export]
+macro_rules! on_grants_changed_export {
+    ($plugin:ty) => {
+        #[::extism_pdk::plugin_fn]
+        pub fn on_grants_changed(
+            input: ::extism_pdk::Json<$crate::GrantStatus>,
+        ) -> ::extism_pdk::FnResult<()> {
+            let ctx = $crate::PluginCtx::from_session($crate::SessionCtx::default());
+            Ok(
+                <$plugin as $crate::OnGrantsChanged>::on_grants_changed(input.0, &ctx)
+                    .map_err(|e| ::extism_pdk::Error::msg(e.to_string()))?,
+            )
         }
     };
 }
