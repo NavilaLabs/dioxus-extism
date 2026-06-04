@@ -219,6 +219,7 @@ pub struct PluginSummary {
 // ── Loaded plugin ─────────────────────────────────────────────────────────────
 
 pub struct LoadedPlugin {
+    // NOTE: fields are pub(crate) — construct via runtime methods.
     pub(crate) manifest: PluginManifest,
     pub(crate) pool: extism::Pool,
     /// Resolved pool size (number of WASM instances).
@@ -3888,10 +3889,11 @@ impl<HostCtx> PluginRuntimeBuilder<HostCtx> {
 }
 
 /// Build a `GrantStatus` to send to a plugin's `on_load` / `on_grants_changed` export.
+#[allow(dead_code)]
 ///
 /// Required grants appear with `granted: true`; optional grants appear with their
 /// actual status and a `denial_reason` when absent.
-pub(crate) fn build_grant_status(
+pub fn build_grant_status(
     requires: &[dioxus_extism_protocol::PluginDependency],
     granted_capabilities: &[HostCapability],
 ) -> GrantStatus {
@@ -3929,7 +3931,7 @@ pub(crate) fn build_grant_status(
 /// Extract `granted_call_plugins` map from a list of `HostCapability` values.
 ///
 /// Used when constructing `CallCtx` so `dx_call_plugin` can check capabilities inline.
-pub(crate) fn call_plugin_map(
+pub fn call_plugin_map(
     capabilities: &[HostCapability],
 ) -> std::collections::HashMap<PluginId, std::collections::HashSet<String>> {
     let mut map: std::collections::HashMap<PluginId, std::collections::HashSet<String>> =
@@ -3982,7 +3984,7 @@ pub(crate) fn build_optional_grant_request(
 /// in the dep_graph at the correct version and declare the function as public. The host's
 /// `GrantPolicyFn` (for optional items) is handled separately when a session context is
 /// available; at build time (no session) optional items are granted by default.
-pub(crate) fn derive_granted_capabilities(
+pub fn derive_granted_capabilities(
     plugin_id: &PluginId,
     requires: &[dioxus_extism_protocol::PluginDependency],
     dep_graph: &DepGraph,
@@ -4262,6 +4264,8 @@ impl<HostCtx: Send + Sync + 'static> PluginRuntimeExt<HostCtx> for axum::Router 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::dep_graph::PluginDepInfo;
+    use crate::error::InstallError;
     use serde_json::json;
     use std::time::Duration;
 
@@ -4376,6 +4380,113 @@ mod tests {
 
         let val = runtime.get_plugin_state(&plugin_id, "key", &session_id).await;
         assert!(val.is_none(), "session state should have been evicted after TTL");
+    }
+
+    // ── Dep-graph tests (step 14) ─────────────────────────────────────────────
+
+    #[test]
+    fn dep_graph_required_dep_missing_returns_error() {
+        let g = DepGraph::new();
+        let deps = vec![dioxus_extism_protocol::PluginDependency::new("b", "^1.0", true, vec![])];
+        let err = g.validate_required_deps(&PluginId("a".into()), &deps).unwrap_err();
+        assert!(matches!(err, InstallError::DependencyMissing { .. }));
+    }
+
+    #[test]
+    fn dep_graph_three_node_cycle_detected() {
+        let mut g = DepGraph::new();
+        g.insert(PluginId("a".into()), PluginDepInfo {
+            version: "1.0.0".into(),
+            requires: vec![dioxus_extism_protocol::PluginDependency::new("b", "^1.0", true, vec![])],
+        });
+        g.insert(PluginId("b".into()), PluginDepInfo {
+            version: "1.0.0".into(),
+            requires: vec![dioxus_extism_protocol::PluginDependency::new("c", "^1.0", true, vec![])],
+        });
+        g.insert(PluginId("c".into()), PluginDepInfo {
+            version: "1.0.0".into(),
+            requires: vec![dioxus_extism_protocol::PluginDependency::new("a", "^1.0", true, vec![])],
+        });
+        assert!(matches!(g.check_acyclic(), Err(InstallError::CyclicDependency { .. })));
+    }
+
+    #[test]
+    fn grant_derivation_required_dep_present_grants_capability() {
+        let mut g = DepGraph::new();
+        g.insert(PluginId("b".into()), PluginDepInfo { version: "1.0.0".into(), requires: vec![] });
+        let dep = dioxus_extism_protocol::PluginDependency::new("b", "^1.0", true, vec!["fn1".into(), "fn2".into()]);
+        let caps = derive_granted_capabilities(&PluginId("a".into()), &[dep], &g);
+        assert_eq!(caps.len(), 1);
+        match &caps[0] {
+            HostCapability::CallPlugin { target_plugin_id, allowed_functions } => {
+                assert_eq!(target_plugin_id.0, "b");
+                assert_eq!(allowed_functions, &["fn1", "fn2"]);
+            }
+            other => panic!("expected CallPlugin, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn grant_status_reflects_required_grant() {
+        let mut g = DepGraph::new();
+        g.insert(PluginId("b".into()), PluginDepInfo { version: "1.0.0".into(), requires: vec![] });
+        let dep = dioxus_extism_protocol::PluginDependency::new("b", "^1.0", true, vec!["fn1".into()]);
+        let caps = derive_granted_capabilities(&PluginId("a".into()), &[dep.clone()], &g);
+        let status = build_grant_status(&[dep], &caps);
+        assert_eq!(status.call_plugin.len(), 1);
+        let grant = &status.call_plugin[0];
+        assert!(grant.granted);
+        assert!(grant.required);
+        assert!(grant.denial_reason.is_none());
+    }
+
+    #[test]
+    fn grant_status_optional_missing_dep_is_not_granted() {
+        let g = DepGraph::new();
+        let dep = dioxus_extism_protocol::PluginDependency::new("b", "^1.0", false, vec!["fn1".into()]);
+        let caps = derive_granted_capabilities(&PluginId("a".into()), &[dep.clone()], &g);
+        let status = build_grant_status(&[dep], &caps);
+        assert_eq!(status.call_plugin.len(), 1);
+        let grant = &status.call_plugin[0];
+        assert!(!grant.granted);
+        assert!(!grant.required);
+        assert!(grant.denial_reason.is_some());
+    }
+
+    #[tokio::test]
+    async fn recompute_grants_default_allow_no_policy() {
+        use dioxus_extism_protocol::PluginDependency;
+        let runtime = PluginRuntimeBuilder::<()>::new().build().await.expect("build");
+        let consumer_id = PluginId("consumer".into());
+        let provider_id = PluginId("provider".into());
+        runtime.dep_graph.write().await.insert(
+            provider_id.clone(),
+            PluginDepInfo { version: "1.0.0".into(), requires: vec![] },
+        );
+        let requires = vec![PluginDependency::new("provider", "^1.0", false, vec!["fn1".into()])];
+        runtime.dep_graph.write().await.insert(
+            consumer_id.clone(),
+            PluginDepInfo { version: "1.0.0".into(), requires: requires.clone() },
+        );
+        // Insert synthetic plugin.
+        {
+            let ctx = make_test_call_ctx(&runtime, &consumer_id);
+            let user_data = extism::UserData::new(ctx);
+            let ctx_arc = user_data.get().expect("ctx_arc");
+            let mut manifest = dioxus_extism_protocol::PluginManifest::default();
+            manifest.id = consumer_id.clone();
+            manifest.version = "1.0.0".into();
+            manifest.requires_plugins = requires;
+            runtime.plugins.write().await.insert(
+                consumer_id.clone(),
+                make_test_loaded_plugin(manifest, ctx_arc, vec![]),
+            );
+        }
+        let session = SessionCtx::default();
+        runtime.recompute_grants(&consumer_id, &session, &()).await.expect("recompute");
+        let plugins = runtime.plugins.read().await;
+        let p = plugins.get(&consumer_id).expect("consumer");
+        assert_eq!(p.granted_capabilities.len(), 1, "should have 1 grant");
     }
 
     // ── Grant policy tests (step 5) ──────────────────────────────────────────
@@ -4561,5 +4672,52 @@ mod tests {
             "policy veto should remove optional grant; got {:?}",
             consumer.granted_capabilities
         );
+    }
+
+    // ── Test helpers ──────────────────────────────────────────────────────────
+
+    fn make_test_call_ctx(
+        runtime: &Arc<PluginRuntime>,
+        caller: &PluginId,
+    ) -> crate::host_functions::CallCtx {
+        crate::host_functions::CallCtx {
+            caller: caller.clone(),
+            session_states: runtime.session_states.clone(),
+            session_last_access: runtime.session_last_access.clone(),
+            global_states: runtime.global_states.clone(),
+            invocation_registry: runtime.invocation_registry.clone(),
+            persistence: None,
+            granted_invocations: Default::default(),
+            granted_global_read: Default::default(),
+            granted_global_write: Default::default(),
+            granted_http_hosts: Default::default(),
+            granted_plugin_state_reads: Default::default(),
+            event_tx: runtime.event_tx.clone(),
+            plugin_dispatch: runtime.plugin_dispatch.clone(),
+            granted_call_plugins: Default::default(),
+            max_call_depth: 32,
+            audit_sink: None,
+        }
+    }
+
+    fn make_test_loaded_plugin(
+        manifest: dioxus_extism_protocol::PluginManifest,
+        ctx_arc: Arc<std::sync::Mutex<crate::host_functions::CallCtx>>,
+        granted_capabilities: Vec<HostCapability>,
+    ) -> LoadedPlugin {
+        LoadedPlugin {
+            manifest,
+            pool: extism::Pool::new_from_builder(
+                || extism::PluginBuilder::new(extism::Manifest::new(Vec::<extism::Wasm>::new())).build(),
+                extism::PoolBuilder::default().with_max_instances(1),
+            ),
+            pool_size: 1,
+            active_count: Arc::new(AtomicUsize::new(0)),
+            enabled: AtomicBool::new(true),
+            config: PluginInstallConfig::default(),
+            ctx_arc,
+            trust_tag: crate::trust::TrustTag { verified: false, signer_key_id: None },
+            granted_capabilities,
+        }
     }
 }
