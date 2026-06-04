@@ -1,6 +1,7 @@
 // Phase 1 skeleton — many items are unused until Phase 2 WASM loading.
 #![allow(dead_code)]
 
+pub mod dep_graph;
 mod error;
 mod host_functions;
 mod manifest_extension;
@@ -9,7 +10,8 @@ mod runtime;
 mod trust;
 pub mod tree;
 
-pub use error::{InvocationError, PersistenceError, PluginRuntimeError};
+pub use dep_graph::DepGraph;
+pub use error::{InstallError, InvocationError, PersistenceError, PluginRuntimeError};
 pub use dioxus_extism_protocol::RouteTransforms;
 pub use manifest_extension::{ManifestExtensionError, ManifestExtensionHandler, OnUnknownExtension};
 pub use trust::{TrustKey, TrustTag};

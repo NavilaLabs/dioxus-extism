@@ -19,6 +19,7 @@ ring                   = { workspace = true }
 reqwest                = { workspace = true }
 async-trait            = { workspace = true }
 futures                = { workspace = true }
+semver                 = { workspace = true }
 
 [dev-dependencies]
 tokio      = { workspace = true }

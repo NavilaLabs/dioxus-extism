@@ -838,6 +838,23 @@ pub struct PluginDependency {
     pub functions: Vec<String>,
 }
 
+impl PluginDependency {
+    /// Construct a dependency declaration.
+    pub fn new(
+        id: impl Into<String>,
+        version: impl Into<String>,
+        required: bool,
+        functions: Vec<String>,
+    ) -> Self {
+        Self {
+            id: PluginId(id.into()),
+            version: VersionRange(version.into()),
+            required,
+            functions,
+        }
+    }
+}
+
 /// Reason a `CallPlugin` grant was denied.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[non_exhaustive]

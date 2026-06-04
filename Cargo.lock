@@ -1235,6 +1235,7 @@ dependencies = [
  "indexmap",
  "reqwest",
  "ring",
+ "semver",
  "serde",
  "serde_json",
  "sha2",

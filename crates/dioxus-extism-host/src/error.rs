@@ -2,6 +2,35 @@ use dioxus_extism_protocol::PluginId;
 
 use crate::manifest_extension::ManifestExtensionError;
 
+/// Errors that occur during plugin install (dependency resolution, grants, bundles).
+#[derive(Debug, thiserror::Error)]
+#[non_exhaustive]
+pub enum InstallError {
+    #[error("required dependency '{dependency:?}' of plugin '{plugin:?}' is not installed")]
+    DependencyMissing { plugin: PluginId, dependency: PluginId },
+
+    #[error(
+        "plugin '{plugin:?}' requires '{dependency:?}' at '{required}' but found '{found}'"
+    )]
+    DependencyVersionConflict {
+        plugin: PluginId,
+        dependency: PluginId,
+        required: String,
+        found: String,
+    },
+
+    #[error("plugin '{plugin:?}' requires function '{function}' from '{dependency:?}' but it is not declared public")]
+    FunctionNotPublic { plugin: PluginId, dependency: PluginId, function: String },
+
+    #[error("cyclic dependency detected among plugins: {cycle:?}")]
+    CyclicDependency { cycle: Vec<PluginId> },
+
+    /// Wraps `PluginRuntimeError` so callers that already have an install pipeline can
+    /// propagate runtime errors without a separate conversion.
+    #[error("runtime error during install: {0}")]
+    Runtime(#[from] PluginRuntimeError),
+}
+
 /// Runtime errors from plugin operations.
 #[derive(Debug, thiserror::Error)]
 #[non_exhaustive]
