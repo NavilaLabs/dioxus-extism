@@ -583,6 +583,80 @@ impl<HostCtx> PluginRuntime<HostCtx> {
         self.plugins.read().await.get(id).map(|p| p.trust_tag.clone())
     }
 
+    /// Recompute `CallPlugin` grants for a plugin, applying the registered `GrantPolicyFn`.
+    ///
+    /// Call this after `install()` when you want the policy to vet optional grants with a
+    /// real `HostCtx`. Required grants are never submitted to the policy. Optional grants
+    /// that are not satisfiable (target absent or wrong version) are silently skipped.
+    ///
+    /// # Errors
+    /// Returns `PluginRuntimeError::PluginNotFound` if the plugin is not loaded.
+    pub async fn recompute_grants(
+        &self,
+        plugin_id: &PluginId,
+        session: &SessionCtx,
+        host_ctx: &HostCtx,
+    ) -> Result<(), PluginRuntimeError> {
+        let requires = {
+            let plugins = self.plugins.read().await;
+            let p = plugins
+                .get(plugin_id)
+                .ok_or_else(|| PluginRuntimeError::PluginNotFound(plugin_id.clone()))?;
+            p.manifest.requires_plugins.clone()
+        };
+
+        let dg = self.dep_graph.read().await;
+        let mut new_grants = derive_granted_capabilities(plugin_id, &requires, &dg);
+
+        // Apply policy for optional deps.
+        let policy = self.grant_policy.read().await;
+        if let Some(policy_fn) = policy.as_deref() {
+            let (request, target_ids) = build_optional_grant_request(plugin_id, &requires, &dg);
+            if !request.items.is_empty() {
+                let call_ctx = CallContext::new(session, host_ctx);
+                let decision = policy_fn(&request, &call_ctx);
+                // Remove capabilities for vetoed optional targets.
+                for &idx in &decision.denied {
+                    if let Some(target_id) = target_ids.get(idx) {
+                        new_grants.retain(|cap| {
+                            if let HostCapability::CallPlugin { target_plugin_id, .. } = cap {
+                                target_plugin_id != target_id
+                            } else {
+                                true
+                            }
+                        });
+                    }
+                }
+            }
+        }
+        drop(policy);
+        drop(dg);
+
+        // Update the plugin's granted capabilities.
+        let mut plugins = self.plugins.write().await;
+        if let Some(p) = plugins.get_mut(plugin_id) {
+            p.granted_capabilities = new_grants;
+        }
+        Ok(())
+    }
+
+    /// Register a grant-policy function for optional `CallPlugin` grants at runtime.
+    ///
+    /// Replaces any previously set policy. By default (no policy registered)
+    /// **all satisfiable optional grants are allowed**.
+    pub async fn register_grant_policy(
+        &self,
+        policy: impl Fn(
+                &dioxus_extism_protocol::GrantRequest,
+                &CallContext<'_, HostCtx>,
+            ) -> dioxus_extism_protocol::GrantDecision
+            + Send
+            + Sync
+            + 'static,
+    ) {
+        *self.grant_policy.write().await = Some(Arc::new(policy));
+    }
+
     /// Register a handler for one manifest extension namespace.
     ///
     /// Affects plugins loaded **after** this call. Already-loaded plugins are not
@@ -2181,6 +2255,8 @@ impl<HostCtx> PluginRuntime<HostCtx> {
         let requires_plugins = manifest.requires_plugins.clone();
         let new_map = {
             let dg = self.dep_graph.read().await;
+            // Default-allow: grant all satisfiable deps. Policy can be applied via
+            // recompute_grants(plugin_id, session, host_ctx) after install.
             let granted_capabilities =
                 derive_granted_capabilities(&plugin_id, &requires_plugins, &dg);
             drop(dg);
@@ -3512,6 +3588,38 @@ impl<HostCtx> PluginRuntimeBuilder<HostCtx> {
     }
 }
 
+/// Build a `GrantRequest` and `GrantDecision` for the optional deps of a plugin.
+///
+/// Returns `(request, satisfiable_target_ids)` so the caller can apply the decision
+/// to the list of granted capabilities.
+pub(crate) fn build_optional_grant_request(
+    plugin_id: &PluginId,
+    requires: &[dioxus_extism_protocol::PluginDependency],
+    dep_graph: &DepGraph,
+) -> (dioxus_extism_protocol::GrantRequest, Vec<PluginId>) {
+    use dioxus_extism_protocol::{CapabilityKind, GrantRequest, GrantRequestItem};
+
+    let mut items = Vec::new();
+    let mut target_ids = Vec::new();
+
+    for dep in requires {
+        if dep.required { continue; }
+        let satisfiable = dep_graph.version_of(&dep.id)
+            .is_some_and(|v| {
+                crate::dep_graph::check_version_match(plugin_id, &dep.id, &dep.version.0, v)
+                    .is_ok()
+            });
+        items.push(GrantRequestItem {
+            kind: CapabilityKind::CallPlugin,
+            target_plugin: dep.id.clone(),
+            function: dep.functions.first().cloned().unwrap_or_default(),
+            satisfiable,
+        });
+        target_ids.push(dep.id.clone());
+    }
+    (GrantRequest { plugin_id: plugin_id.clone(), items }, target_ids)
+}
+
 /// Derive `HostCapability::CallPlugin` entries for a plugin from its `requires_plugins` list.
 ///
 /// This is pure logic — it only grants capabilities for dependencies that are present
@@ -3912,5 +4020,186 @@ mod tests {
 
         let val = runtime.get_plugin_state(&plugin_id, "key", &session_id).await;
         assert!(val.is_none(), "session state should have been evicted after TTL");
+    }
+
+    // ── Grant policy tests (step 5) ──────────────────────────────────────────
+
+    fn make_dep_graph_with(
+        id: &str, version: &str,
+        deps: Vec<dioxus_extism_protocol::PluginDependency>,
+    ) -> DepGraph {
+        let mut g = DepGraph::new();
+        g.insert(
+            PluginId(id.into()),
+            PluginDepInfo { version: version.into(), requires: deps },
+        );
+        g
+    }
+
+    #[test]
+    fn default_allow_no_policy_grants_all_satisfiable() {
+        use dioxus_extism_protocol::PluginDependency;
+        let plugin_id = PluginId("a".into());
+        let dep = PluginDependency::new("b", "^1.0", false, vec!["f1".into()]);
+        let mut g = DepGraph::new();
+        g.insert(PluginId("b".into()), PluginDepInfo { version: "1.2.0".into(), requires: vec![] });
+
+        let caps = derive_granted_capabilities(&plugin_id, &[dep], &g);
+        assert_eq!(caps.len(), 1);
+        if let HostCapability::CallPlugin { target_plugin_id, allowed_functions } = &caps[0] {
+            assert_eq!(target_plugin_id.0, "b");
+            assert_eq!(allowed_functions, &["f1".to_string()]);
+        } else {
+            panic!("expected CallPlugin capability");
+        }
+    }
+
+    #[test]
+    fn no_grant_for_absent_optional_dep() {
+        use dioxus_extism_protocol::PluginDependency;
+        let plugin_id = PluginId("a".into());
+        let dep = PluginDependency::new("b", "^1.0", false, vec!["f1".into()]);
+        let g = DepGraph::new(); // b not in graph
+
+        let caps = derive_granted_capabilities(&plugin_id, &[dep], &g);
+        assert!(caps.is_empty(), "absent optional dep must not be granted");
+    }
+
+    #[test]
+    fn policy_veto_removes_optional_grant() {
+        use dioxus_extism_protocol::{GrantDecision, PluginDependency};
+
+        let plugin_id = PluginId("a".into());
+        let dep = PluginDependency::new("b", "^1.0", false, vec!["f1".into()]);
+        let mut g = DepGraph::new();
+        g.insert(PluginId("b".into()), PluginDepInfo { version: "1.0.0".into(), requires: vec![] });
+
+        let deps = vec![dep];
+        let mut caps = derive_granted_capabilities(&plugin_id, &deps, &g);
+        assert_eq!(caps.len(), 1, "should have one grant before veto");
+
+        let (request, target_ids) = build_optional_grant_request(&plugin_id, &deps, &g);
+        let dummy_session = SessionCtx {
+            session_id: SessionId("test".into()),
+            ..SessionCtx::default()
+        };
+        let host_ctx = ();
+        let call_ctx = CallContext::new(&dummy_session, &host_ctx);
+
+        // Policy that vetoes everything.
+        let decision: GrantDecision = {
+            let _ = (&request, &call_ctx);
+            GrantDecision { denied: (0..request.items.len()).collect() }
+        };
+
+        for &idx in &decision.denied {
+            if let Some(target_id) = target_ids.get(idx) {
+                caps.retain(|cap| {
+                    if let HostCapability::CallPlugin { target_plugin_id, .. } = cap {
+                        target_plugin_id != target_id
+                    } else {
+                        true
+                    }
+                });
+            }
+        }
+        assert!(caps.is_empty(), "policy veto must remove the optional grant");
+    }
+
+    #[tokio::test]
+    async fn recompute_grants_applies_policy() {
+        use dioxus_extism_protocol::{GrantDecision, PluginDependency};
+
+        // Build a runtime with a veto-all policy.
+        let runtime = PluginRuntimeBuilder::<()>::new()
+            .with_grant_policy(|_req, _ctx| GrantDecision { denied: vec![0] })
+            .build()
+            .await
+            .expect("build");
+
+        // Manually insert a dep_graph node and a plugin with one optional dep.
+        runtime.dep_graph.write().await.insert(
+            PluginId("provider".into()),
+            PluginDepInfo { version: "1.0.0".into(), requires: vec![] },
+        );
+        runtime.dep_graph.write().await.insert(
+            PluginId("consumer".into()),
+            PluginDepInfo {
+                version: "1.0.0".into(),
+                requires: vec![PluginDependency::new("provider", "^1.0", false, vec!["fn1".into()])],
+            },
+        );
+
+        // Insert a synthetic LoadedPlugin for the consumer.
+        let consumer_id = PluginId("consumer".into());
+        let init_session = SessionCtx::default();
+        let ctx = crate::host_functions::CallCtx {
+            caller: consumer_id.clone(),
+            session_states: runtime.session_states.clone(),
+            session_last_access: runtime.session_last_access.clone(),
+            global_states: runtime.global_states.clone(),
+            invocation_registry: runtime.invocation_registry.clone(),
+            persistence: None,
+            granted_invocations: Default::default(),
+            granted_global_read: Default::default(),
+            granted_global_write: Default::default(),
+            granted_http_hosts: Default::default(),
+            granted_plugin_state_reads: Default::default(),
+            event_tx: runtime.event_tx.clone(),
+        };
+        let user_data = extism::UserData::new(ctx);
+        let ctx_arc = user_data.get().expect("ctx_arc");
+        let dummy_manifest = {
+            let mut m = dioxus_extism_protocol::PluginManifest::default();
+            m.id = consumer_id.clone();
+            m.version = "1.0.0".into();
+            m.requires_plugins = vec![
+                PluginDependency::new("provider", "^1.0", false, vec!["fn1".into()])
+            ];
+            m
+        };
+        let initial_caps = {
+            let dg = runtime.dep_graph.read().await;
+            derive_granted_capabilities(&consumer_id, &dummy_manifest.requires_plugins, &dg)
+        };
+        assert_eq!(initial_caps.len(), 1, "initial caps before policy should have 1 grant");
+
+        runtime.plugins.write().await.insert(
+            consumer_id.clone(),
+            LoadedPlugin {
+                manifest: dummy_manifest,
+                pool: extism::Pool::new_from_builder(
+                    || {
+                        extism::PluginBuilder::new(extism::Manifest::new(
+                            Vec::<extism::Wasm>::new(),
+                        ))
+                        .with_wasi(false)
+                        .build()
+                    },
+                    extism::PoolBuilder::default().with_max_instances(1),
+                ),
+                pool_size: 1,
+                active_count: Arc::new(AtomicUsize::new(0)),
+                enabled: AtomicBool::new(true),
+                config: PluginInstallConfig::default(),
+                ctx_arc,
+                trust_tag: crate::trust::TrustTag { verified: false, signer_key_id: None },
+                granted_capabilities: initial_caps,
+            },
+        );
+
+        // Now recompute — policy should veto the optional grant.
+        runtime
+            .recompute_grants(&consumer_id, &init_session, &())
+            .await
+            .expect("recompute");
+
+        let plugins = runtime.plugins.read().await;
+        let consumer = plugins.get(&consumer_id).expect("consumer");
+        assert!(
+            consumer.granted_capabilities.is_empty(),
+            "policy veto should remove optional grant; got {:?}",
+            consumer.granted_capabilities
+        );
     }
 }

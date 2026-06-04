@@ -17,7 +17,8 @@ pub use manifest_extension::{ManifestExtensionError, ManifestExtensionHandler, O
 pub use trust::{TrustKey, TrustTag};
 pub use persistence::JsonFilePersistence;
 pub use runtime::{
-    CapabilityCheckFn, GlobalStateMap, HookOutcome, PluginInstallConfig, PluginRuntime,
+    CallOutcome, CapabilityCheckFn, CrossPluginAuditSink, CrossPluginCallEvent,
+    GlobalStateMap, GrantPolicyFn, HookOutcome, PluginInstallConfig, PluginRuntime,
     PluginRuntimeBuilder, PluginRuntimeExt, PluginSource, PluginSummary, RouteReplacePolicyFn,
     RuntimeMetrics, SessionStateMap, StatePersistenceProvider, TransformEntry, TransformRegistry,
 };
