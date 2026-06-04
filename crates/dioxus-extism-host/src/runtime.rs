@@ -1854,8 +1854,9 @@ impl<HostCtx> PluginRuntime<HostCtx> {
             granted_plugin_state_reads,
             event_tx: self.event_tx.clone(),
             plugin_dispatch: self.plugin_dispatch.clone(),
-            granted_call_plugins: std::collections::HashMap::new(), // populated after capability derivation
+            granted_call_plugins: std::collections::HashMap::new(),
             max_call_depth: self.cross_plugin_max_depth,
+            audit_sink: self.audit_sink.clone(),
         };
         let user_data = extism::UserData::new(new_ctx);
         let new_ctx_arc = user_data
@@ -2302,8 +2303,9 @@ impl<HostCtx> PluginRuntime<HostCtx> {
             granted_plugin_state_reads,
             event_tx: self.event_tx.clone(),
             plugin_dispatch: self.plugin_dispatch.clone(),
-            granted_call_plugins: std::collections::HashMap::new(), // updated below after grant derivation
+            granted_call_plugins: std::collections::HashMap::new(),
             max_call_depth: self.cross_plugin_max_depth,
+            audit_sink: self.audit_sink.clone(),
         };
         let user_data = extism::UserData::new(ctx);
         let ctx_arc = user_data
@@ -3498,6 +3500,7 @@ impl<HostCtx> PluginRuntimeBuilder<HostCtx> {
                 plugin_dispatch: build_dispatch, // replaced post-build with shared dispatch
                 granted_call_plugins: std::collections::HashMap::new(),
                 max_call_depth: self.cross_plugin_max_depth,
+                audit_sink: self.audit_sink.clone(),
             };
             let user_data = extism::UserData::new(ctx);
             let ctx_arc = user_data
@@ -4365,6 +4368,7 @@ mod tests {
             plugin_dispatch: runtime.plugin_dispatch.clone(),
             granted_call_plugins: Default::default(),
             max_call_depth: 32,
+            audit_sink: None,
         };
         let user_data = extism::UserData::new(ctx);
         let ctx_arc = user_data.get().expect("ctx_arc");

@@ -2,7 +2,7 @@ use std::{
     cell::RefCell,
     collections::{HashMap, HashSet},
     sync::{Arc, Mutex},
-    time::{Duration, Instant},
+    time::{Duration, Instant, SystemTime},
 };
 
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -107,6 +107,8 @@ pub struct CallCtx {
     pub granted_call_plugins: HashMap<PluginId, HashSet<String>>,
     /// Maximum cross-plugin call-chain depth.
     pub max_call_depth: usize,
+    /// Optional audit sink for cross-plugin call events.
+    pub audit_sink: Option<Arc<dyn crate::runtime::CrossPluginAuditSink>>,
 }
 
 /// Build all host functions, wiring them to `ctx`.
@@ -668,20 +670,37 @@ fn make_call_plugin(user_data: extism::UserData<CallCtx>) -> extism::Function {
             let input_json: String = plugin.memory_get_val(&inputs[2])?;
 
             let arc = extract_ctx(&user_data)?;
-            let (dispatch, granted, max_depth) = {
+            let (dispatch, granted, max_depth, audit_sink, caller_id) = {
                 let ctx = arc.lock().map_err(|_| anyhow::anyhow!("CallCtx mutex poisoned"))?;
                 (
                     ctx.plugin_dispatch.clone(),
                     ctx.granted_call_plugins.clone(),
                     ctx.max_call_depth,
+                    ctx.audit_sink.clone(),
+                    ctx.caller.clone(),
                 )
             };
 
             let target_id = PluginId(target_id_str);
 
+            let emit_audit = |outcome: crate::runtime::CallOutcome| {
+                if let Some(sink) = &audit_sink {
+                    sink.record(crate::runtime::CrossPluginCallEvent {
+                        caller: caller_id.clone(),
+                        target: target_id.clone(),
+                        function: function.clone(),
+                        outcome,
+                        timestamp: SystemTime::now(),
+                    });
+                }
+            };
+
             // 1. Capability check.
             let allowed = granted.get(&target_id).is_some_and(|fns| fns.contains(&function));
             if !allowed {
+                emit_audit(crate::runtime::CallOutcome::Denied {
+                    reason: dioxus_extism_protocol::DenialReason::HostPolicyVeto,
+                });
                 let err = serde_json::to_string(&CallError::PermissionDenied)?;
                 let handle = plugin.memory_new(err.as_str())?;
                 outputs[0] = plugin.memory_to_val(handle);
@@ -692,6 +711,9 @@ fn make_call_plugin(user_data: extism::UserData<CallCtx>) -> extism::Function {
             let depth = push_cross_plugin_depth();
             if depth > max_depth {
                 pop_cross_plugin_depth();
+                emit_audit(crate::runtime::CallOutcome::Failed {
+                    error_kind: dioxus_extism_protocol::CallErrorKind::StackOverflow,
+                });
                 let err = serde_json::to_string(&CallError::StackOverflow)?;
                 let handle = plugin.memory_new(err.as_str())?;
                 outputs[0] = plugin.memory_to_val(handle);
@@ -699,13 +721,16 @@ fn make_call_plugin(user_data: extism::UserData<CallCtx>) -> extism::Function {
             }
 
             // 3. Get target pool.
-            let handle = tokio::runtime::Handle::current();
-            let pool_entry = handle.block_on(async {
+            let h = tokio::runtime::Handle::current();
+            let pool_entry = h.block_on(async {
                 dispatch.pools.read().await.get(&target_id).cloned()
             });
 
             let Some((pool, active_count, pool_size)) = pool_entry else {
                 pop_cross_plugin_depth();
+                emit_audit(crate::runtime::CallOutcome::Denied {
+                    reason: dioxus_extism_protocol::DenialReason::TargetUnavailable,
+                });
                 let err = serde_json::to_string(&CallError::TargetUnavailable)?;
                 let handle = plugin.memory_new(err.as_str())?;
                 outputs[0] = plugin.memory_to_val(handle);
@@ -714,28 +739,36 @@ fn make_call_plugin(user_data: extism::UserData<CallCtx>) -> extism::Function {
 
             // 4. Dispatch call.
             active_count.fetch_add(1, Ordering::Relaxed);
+            let call_start = std::time::Instant::now();
             let result: Result<serde_json::Value, CallError> = {
                 let pool_result = pool
                     .get(Duration::from_secs(5))
                     .map_err(|_| CallError::TargetUnavailable)?
                     .ok_or(CallError::TargetUnavailable)?;
                 let mut target_plugin = pool_result;
-                let start = std::time::Instant::now();
                 let call_result = target_plugin
                     .call::<extism::convert::Json<serde_json::Value>, extism::convert::Json<serde_json::Value>>(
                         &function,
                         extism::convert::Json(serde_json::from_str(&input_json)
                             .map_err(|_| CallError::DeserializationError)?),
                     );
-                let _ = start; // elapsed available for audit later
                 match call_result {
                     Ok(extism::convert::Json(v)) => Ok(v),
                     Err(_) => Err(CallError::DeserializationError),
                 }
             };
+            let elapsed = call_start.elapsed();
             active_count.fetch_sub(1, Ordering::Relaxed);
-            let _ = pool_size; // available for metrics if needed
+            let _ = pool_size;
             pop_cross_plugin_depth();
+
+            // 5. Audit.
+            match &result {
+                Ok(_) => emit_audit(crate::runtime::CallOutcome::Allowed { duration: elapsed }),
+                Err(e) => emit_audit(crate::runtime::CallOutcome::Failed {
+                    error_kind: dioxus_extism_protocol::CallErrorKind::from(e),
+                }),
+            }
 
             let out_json = match result {
                 Ok(v) => serde_json::json!({ "Ok": v }),
