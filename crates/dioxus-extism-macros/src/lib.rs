@@ -102,16 +102,7 @@ pub fn overridable(_attr: TokenStream, item: TokenStream) -> TokenStream {
 /// note. Manifest population is done in Rust code at manifest construction time.
 #[proc_macro_attribute]
 pub fn public_fn(_attr: TokenStream, item: TokenStream) -> TokenStream {
-    // Delegate to extism_pdk's plugin_fn — we just re-apply it.
-    let mut tokens: proc_macro2::TokenStream = item.clone().into();
-    let plugin_fn_attr = quote! {
-        #[::extism_pdk::plugin_fn]
-    };
-    let result = quote! {
-        #plugin_fn_attr
-        #tokens
-    };
-    // Drop the re-attribute to avoid double-application; emit the item with plugin_fn only.
+    // Pass-through: delegate to #[plugin_fn].
     let input = parse_macro_input!(item as ItemFn);
     let vis = &input.vis;
     let sig = &input.sig;

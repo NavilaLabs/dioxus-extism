@@ -3783,15 +3783,7 @@ impl<HostCtx> PluginRuntimeBuilder<HostCtx> {
         }
         // Acyclicity check (should not fail since build-order is sequential, but enforce).
         built_dep_graph.check_acyclic().map_err(|e| PluginRuntimeError::Pool(e.to_string()))?;
-        // Derive grants (no host context available at build time — use dummy session).
-        let dummy_session = SessionCtx {
-            session_id: SessionId("__build__".into()),
-            user_id: None,
-            client: ClientCapabilities::default(),
-            caller: None,
-        };
-        let dummy_host_ctx_for_grants = (); // HostCtx not available; no-op for non-() hosts at build
-        let _ = dummy_host_ctx_for_grants; // suppress unused warning for non-() HostCtx
+        // Derive grants (no host context available at build time).
         for (id, loaded) in all_plugins.iter_mut() {
             loaded.granted_capabilities = derive_granted_capabilities(
                 id,

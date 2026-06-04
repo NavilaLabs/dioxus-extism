@@ -445,7 +445,6 @@ where
     I: serde::Serialize,
     O: serde::de::DeserializeOwned,
 {
-    use extism_pdk::host_fn;
     #[allow(unsafe_code)]
     mod inner {
         use extism_pdk::host_fn;
@@ -477,7 +476,6 @@ where
 ///
 /// Backed by `dx_is_granted`. Returns `false` on any host-function error.
 pub fn is_granted(kind: CapabilityKind, target_plugin: &PluginId, function: &str) -> bool {
-    use serde::Serialize;
     #[allow(unsafe_code)]
     mod inner {
         use extism_pdk::host_fn;
