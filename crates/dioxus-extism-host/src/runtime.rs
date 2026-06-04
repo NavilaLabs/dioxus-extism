@@ -1727,7 +1727,7 @@ impl<HostCtx> PluginRuntime<HostCtx> {
     /// # Errors
     /// Returns an error if the source cannot be fetched, the manifest is incompatible,
     /// or pool construction fails.
-    #[allow(clippy::too_many_lines, clippy::significant_drop_tightening)]
+    #[allow(clippy::too_many_lines, clippy::significant_drop_tightening, deprecated)]
     pub async fn reload_plugin(
         &self,
         id: &PluginId,
@@ -2132,7 +2132,7 @@ impl<HostCtx> PluginRuntime<HostCtx> {
     /// # Errors
     /// Returns `PluginRuntimeError` if the source cannot be fetched, the manifest
     /// is incompatible, capabilities are denied, or signature verification fails.
-    #[allow(clippy::too_many_lines)]
+    #[allow(clippy::too_many_lines, deprecated)]
     pub async fn install(
         &self,
         source: PluginSource,
@@ -3492,7 +3492,7 @@ impl<HostCtx> PluginRuntimeBuilder<HostCtx> {
     ///
     /// Returns an error if any plugin fails to load, compile, or has an incompatible
     /// protocol version, unregistered invocation capability, or checksum mismatch.
-    #[allow(clippy::too_many_lines)]
+    #[allow(clippy::too_many_lines, deprecated)]
     pub async fn build(self) -> Result<Arc<PluginRuntime<HostCtx>>, PluginRuntimeError>
     where
         HostCtx: Send + Sync + 'static,
