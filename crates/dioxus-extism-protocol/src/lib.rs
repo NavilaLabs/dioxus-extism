@@ -784,6 +784,162 @@ impl Default for ApiResponse {
     }
 }
 
+// ── Plugin-to-plugin interaction types ───────────────────────────────────────
+
+/// A semver constraint string such as `"^1.2"` or `">=1.0, <2.0"`.
+///
+/// Stored as a plain `String` in the protocol crate; semver parsing is done in
+/// `dioxus-extism-host` using the `semver` crate.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
+pub struct VersionRange(pub String);
+
+impl<S: Into<String>> From<S> for VersionRange {
+    fn from(s: S) -> Self {
+        Self(s.into())
+    }
+}
+
+/// Declares a single plugin function as callable by other plugins.
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[non_exhaustive]
+pub struct PublicFunctionDecl {
+    /// Optional description shown in tooling / diagnostics.
+    pub description: Option<String>,
+}
+
+/// Maps public export names to their declarations.
+///
+/// Functions not listed here are private (host-only) by default.
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct ExportsManifest {
+    pub public: BTreeMap<String, PublicFunctionDecl>,
+}
+
+/// One plugin dependency declared in a plugin's manifest.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[non_exhaustive]
+pub struct PluginDependency {
+    /// The plugin this plugin depends on.
+    pub id: PluginId,
+    /// Semver constraint the target must satisfy.
+    pub version: VersionRange,
+    /// If `true`, install fails when the dependency is absent or incompatible.
+    /// If `false`, the dependency is optional and the plugin degrades gracefully.
+    pub required: bool,
+    /// The target plugin's public functions this plugin intends to call.
+    pub functions: Vec<String>,
+}
+
+/// Reason a `CallPlugin` grant was denied.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[non_exhaustive]
+pub enum DenialReason {
+    /// The target plugin is not loaded.
+    TargetUnavailable,
+    /// The target plugin is loaded at an incompatible version.
+    TargetVersionMismatch,
+    /// The requested function exists but is not declared public by the target.
+    FunctionNotPublic,
+    /// The host's `GrantPolicyFn` vetoed the optional grant.
+    HostPolicyVeto,
+}
+
+/// Which type of cross-plugin capability is being queried or granted.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[non_exhaustive]
+pub enum CapabilityKind {
+    /// Permission to call a named function on another plugin.
+    CallPlugin,
+}
+
+/// One item in a grant request, for a single `(plugin, function)` pair.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct GrantRequestItem {
+    pub kind: CapabilityKind,
+    pub target_plugin: PluginId,
+    pub function: String,
+    /// Whether the target plugin is loaded and the function is public.
+    pub satisfiable: bool,
+}
+
+/// Submitted to the host's `GrantPolicyFn` for optional grants.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct GrantRequest {
+    /// The plugin requesting the grants.
+    pub plugin_id: PluginId,
+    /// Only optional items are included.
+    pub items: Vec<GrantRequestItem>,
+}
+
+/// Returned by the host's `GrantPolicyFn`. Indices reference `GrantRequest::items`.
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct GrantDecision {
+    /// Indices into `GrantRequest::items` that the host denies.
+    pub denied: Vec<usize>,
+}
+
+/// One resolved `CallPlugin` grant received by a plugin at `on_load`.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CallPluginGrant {
+    pub target_plugin: PluginId,
+    pub function: String,
+    /// Mirrors the manifest declaration.
+    pub required: bool,
+    /// `true` if the grant is usable. `false` only for optional items that were denied.
+    pub granted: bool,
+    pub denial_reason: Option<DenialReason>,
+}
+
+/// Cross-plugin grant state delivered to the plugin at `on_load` and `on_grants_changed`.
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct GrantStatus {
+    pub call_plugin: Vec<CallPluginGrant>,
+}
+
+/// Error type for cross-plugin call failures. Serialised over the WASM boundary.
+#[derive(Debug, Clone, Serialize, Deserialize, thiserror::Error)]
+#[non_exhaustive]
+pub enum CallError {
+    #[error("permission denied")]
+    PermissionDenied,
+    #[error("target plugin unavailable")]
+    TargetUnavailable,
+    #[error("target plugin version mismatch")]
+    TargetVersionMismatch,
+    #[error("target function not public")]
+    FunctionNotPublic,
+    #[error("cross-plugin call stack overflow (max depth exceeded)")]
+    StackOverflow,
+    #[error("deserialisation error")]
+    DeserializationError,
+    #[error("host policy veto")]
+    HostPolicyVeto,
+}
+
+/// Coarse error kind for audit events (no sensitive detail).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[non_exhaustive]
+pub enum CallErrorKind {
+    PermissionDenied,
+    TargetUnavailable,
+    StackOverflow,
+    DeserializationError,
+    Other,
+}
+
+impl From<&CallError> for CallErrorKind {
+    fn from(e: &CallError) -> Self {
+        match e {
+            CallError::PermissionDenied | CallError::FunctionNotPublic | CallError::HostPolicyVeto => {
+                Self::PermissionDenied
+            }
+            CallError::TargetUnavailable | CallError::TargetVersionMismatch => Self::TargetUnavailable,
+            CallError::StackOverflow => Self::StackOverflow,
+            CallError::DeserializationError => Self::DeserializationError,
+        }
+    }
+}
+
 // ── Plugin page route types ───────────────────────────────────────────────────
 
 /// One view page route declared by a plugin in its manifest.
