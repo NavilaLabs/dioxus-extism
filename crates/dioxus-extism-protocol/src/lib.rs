@@ -175,6 +175,14 @@ pub struct PluginManifest {
     /// the value is opaque JSON owned entirely by the host.
     #[serde(default)]
     pub extensions: BTreeMap<String, serde_json::Value>,
+    /// Functions this plugin makes available for other plugins to call.
+    ///
+    /// Functions not listed here are private (host-only) by default.
+    #[serde(default)]
+    pub exports: ExportsManifest,
+    /// Other plugins this plugin depends on for cross-plugin calls.
+    #[serde(default)]
+    pub requires_plugins: Vec<PluginDependency>,
 }
 
 /// State scope declared by a plugin in its manifest.

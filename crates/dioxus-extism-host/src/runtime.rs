@@ -183,6 +183,11 @@ pub struct LoadedPlugin {
     /// Ed25519 verification result recorded at load time. Opaque to dioxus-extism;
     /// hosts use it via [`PluginRuntime::plugin_trust_tag`] to make their own decisions.
     pub(crate) trust_tag: TrustTag,
+    /// `CallPlugin` capabilities derived from `requires_plugins` at install time.
+    ///
+    /// Never declared directly by plugin authors — the host derives these from the
+    /// dependency declarations after validating the dependency graph.
+    pub(crate) granted_capabilities: Vec<HostCapability>,
 }
 
 // ── Registries ────────────────────────────────────────────────────────────────
@@ -1748,6 +1753,7 @@ impl<HostCtx> PluginRuntime<HostCtx> {
                     config,
                     ctx_arc: new_ctx_arc,
                     trust_tag,
+                    granted_capabilities: Vec::new(),
                 },
             );
             let mut new_regs =
@@ -2079,6 +2085,7 @@ impl<HostCtx> PluginRuntime<HostCtx> {
                     config,
                     ctx_arc,
                     trust_tag,
+                    granted_capabilities: Vec::new(),
                 },
             );
             let mut new_regs =
@@ -3215,6 +3222,7 @@ impl<HostCtx> PluginRuntimeBuilder<HostCtx> {
                     config,
                     ctx_arc,
                     trust_tag,
+                    granted_capabilities: Vec::new(),
                 },
             );
 
