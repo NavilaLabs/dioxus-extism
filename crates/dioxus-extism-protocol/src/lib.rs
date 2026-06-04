@@ -517,6 +517,22 @@ pub struct ViewUpdate {
     pub events: Vec<PluginEvent>,
 }
 
+// ── Plugin init context ───────────────────────────────────────────────────────
+
+/// Payload sent to a plugin's `on_load` export at initialisation time.
+///
+/// Uses `#[serde(flatten)]` on `session` so existing plugins receiving `Json<SessionCtx>`
+/// on their `on_load` export continue to work — serde ignores the new `grants` field.
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct PluginInitContext {
+    /// Session context (flattened so the struct is backward-compatible with SessionCtx).
+    #[serde(flatten)]
+    pub session: SessionCtx,
+    /// Cross-plugin grants resolved at install time.
+    #[serde(default)]
+    pub grants: GrantStatus,
+}
+
 // ── Call context ─────────────────────────────────────────────────────────────
 
 /// Combined per-call context handed to host callbacks at every runtime decision point.

@@ -10,10 +10,11 @@ use std::{
 
 use async_trait::async_trait;
 use dioxus_extism_protocol::{
-    CallContext, ClientCapabilities, ComponentResolution, HandlerId, HookCall, HookResult,
-    HostCapability, HostComponentRef, OverrideMap, PluginEvent, PluginId, PluginManifest,
-    PluginView, PriorityHint, RoutePattern, RouteTransforms, SessionCtx, SessionId, SlotContent,
-    TransformContext, TransformInput, TransformOp, TransformOutput, ViewUpdate, PROTOCOL_VERSION,
+    CallContext, CallPluginGrant, ClientCapabilities, ComponentResolution, DenialReason,
+    GrantStatus, HandlerId, HookCall, HookResult, HostCapability, HostComponentRef, OverrideMap,
+    PluginEvent, PluginId, PluginInitContext, PluginManifest, PluginView, PriorityHint,
+    RoutePattern, RouteTransforms, SessionCtx, SessionId, SlotContent, TransformContext,
+    TransformInput, TransformOp, TransformOutput, ViewUpdate, PROTOCOL_VERSION,
 };
 use extism::convert::Json;
 use futures::future::BoxFuture;
@@ -1829,6 +1830,12 @@ impl<HostCtx> PluginRuntime<HostCtx> {
                 },
                 caller: None,
             };
+            let provisional_grants = {
+                let dg = self.dep_graph.read().await;
+                let caps = derive_granted_capabilities(&new_manifest.id, &new_manifest.requires_plugins, &dg);
+                build_grant_status(&new_manifest.requires_plugins, &caps)
+            };
+            let init_ctx = PluginInitContext { session: init_session.clone(), grants: provisional_grants };
             let init_clone = init_session.clone();
             tokio::task::spawn_blocking(move || {
                 host_functions::set_call_session(init_clone.session_id.clone(), init_clone.client.clone());
@@ -1836,7 +1843,7 @@ impl<HostCtx> PluginRuntime<HostCtx> {
                     .get(Duration::from_secs(5))
                     .map_err(|e| PluginRuntimeError::CallFailed { source: e })?
                     .ok_or_else(|| PluginRuntimeError::Pool("timeout on on_load during reload".into()))?;
-                p.call::<Json<SessionCtx>, ()>("on_load", Json(init_session))
+                p.call::<Json<PluginInitContext>, ()>("on_load", Json(init_ctx))
                     .map_err(|e| PluginRuntimeError::CallFailed { source: e })
             })
             .await
@@ -2252,6 +2259,12 @@ impl<HostCtx> PluginRuntime<HostCtx> {
                 },
                 caller: None,
             };
+            let provisional_caps = {
+                let dg = self.dep_graph.read().await;
+                derive_granted_capabilities(&manifest.id, &manifest.requires_plugins, &dg)
+            };
+            let grants = build_grant_status(&manifest.requires_plugins, &provisional_caps);
+            let init_ctx = PluginInitContext { session: init_session.clone(), grants };
             let init_clone = init_session.clone();
             tokio::task::spawn_blocking(move || {
                 host_functions::set_call_session(
@@ -2262,7 +2275,7 @@ impl<HostCtx> PluginRuntime<HostCtx> {
                     .get(Duration::from_secs(5))
                     .map_err(|e| PluginRuntimeError::CallFailed { source: e })?
                     .ok_or_else(|| PluginRuntimeError::Pool("timeout on on_load".into()))?;
-                p.call::<Json<SessionCtx>, ()>("on_load", Json(init_session))
+                p.call::<Json<PluginInitContext>, ()>("on_load", Json(init_ctx))
                     .map_err(|e| PluginRuntimeError::CallFailed { source: e })
             })
             .await
@@ -3458,6 +3471,21 @@ impl<HostCtx> PluginRuntimeBuilder<HostCtx> {
                     },
                     caller: None,
                 };
+                // At build time, compute provisional grants from already-inserted plugins.
+                let provisional_dg = {
+                    let mut g = DepGraph::new();
+                    for (id, p) in &all_plugins {
+                        g.insert(id.clone(), PluginDepInfo {
+                            version: p.manifest.version.clone(),
+                            requires: p.manifest.requires_plugins.clone(),
+                        });
+                    }
+                    g
+                };
+                let provisional_caps =
+                    derive_granted_capabilities(&plugin_manifest.id, &plugin_manifest.requires_plugins, &provisional_dg);
+                let grants = build_grant_status(&plugin_manifest.requires_plugins, &provisional_caps);
+                let init_ctx = PluginInitContext { session: init_session.clone(), grants };
                 let init_session_clone = init_session.clone();
                 tokio::task::spawn_blocking(move || {
                     host_functions::set_call_session(
@@ -3470,7 +3498,7 @@ impl<HostCtx> PluginRuntimeBuilder<HostCtx> {
                         .ok_or_else(|| {
                             PluginRuntimeError::Pool("timeout on on_load".into())
                         })?;
-                    p.call::<Json<SessionCtx>, ()>("on_load", Json(init_session))
+                    p.call::<Json<PluginInitContext>, ()>("on_load", Json(init_ctx))
                         .map_err(|e| PluginRuntimeError::CallFailed { source: e })
                 })
                 .await
@@ -3634,6 +3662,45 @@ impl<HostCtx> PluginRuntimeBuilder<HostCtx> {
 
         Ok(runtime)
     }
+}
+
+/// Build a `GrantStatus` to send to a plugin's `on_load` / `on_grants_changed` export.
+///
+/// Required grants appear with `granted: true`; optional grants appear with their
+/// actual status and a `denial_reason` when absent.
+pub(crate) fn build_grant_status(
+    requires: &[dioxus_extism_protocol::PluginDependency],
+    granted_capabilities: &[HostCapability],
+) -> GrantStatus {
+    let mut call_plugin = Vec::new();
+    for dep in requires {
+        for func in &dep.functions {
+            let granted = granted_capabilities.iter().any(|cap| {
+                if let HostCapability::CallPlugin { target_plugin_id, allowed_functions } = cap {
+                    target_plugin_id == &dep.id && allowed_functions.contains(func)
+                } else {
+                    false
+                }
+            });
+            let denial_reason = if !granted {
+                if dep.required {
+                    None // required grants are always present if we reach on_load
+                } else {
+                    Some(DenialReason::TargetUnavailable)
+                }
+            } else {
+                None
+            };
+            call_plugin.push(CallPluginGrant {
+                target_plugin: dep.id.clone(),
+                function: func.clone(),
+                required: dep.required,
+                granted,
+                denial_reason,
+            });
+        }
+    }
+    GrantStatus { call_plugin }
 }
 
 /// Extract `granted_call_plugins` map from a list of `HostCapability` values.

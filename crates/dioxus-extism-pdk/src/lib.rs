@@ -43,13 +43,15 @@ mod view;
 pub use extism_pdk;
 
 pub use dioxus_extism_protocol::{
-    ApiRequest, ApiResponse, ApiRouteDeclaration, HttpMethod,
-    PageRouteDeclaration, PageRouteInput, PageRouteOutput,
-    AttrValue, BoundEventHandler, ClientCapabilities, DomEvent, HandlerId, HookCall, HookRegistration, HookResult,
-    HostCapability, HostComponentRef, NodeSelector, PluginEvent, PluginId, PluginManifest,
-    PluginView, PriorityHint, PROTOCOL_VERSION, RoutePattern, Selector, SessionCtx, SessionId, SlotContent,
-    SlotRegistration, StateScope, TransformDeclaration, TransformInput, TransformOp,
-    TransformOutput, ViewElement, ViewUpdate,
+    ApiRequest, ApiResponse, ApiRouteDeclaration, CallError, CallPluginGrant, CapabilityKind,
+    DenialReason, ExportsManifest, GrantDecision, GrantRequest, GrantStatus, HttpMethod,
+    PageRouteDeclaration, PageRouteInput, PageRouteOutput, PluginDependency, PluginInitContext,
+    PublicFunctionDecl, VersionRange,
+    AttrValue, BoundEventHandler, ClientCapabilities, DomEvent, HandlerId, HookCall,
+    HookRegistration, HookResult, HostCapability, HostComponentRef, NodeSelector, PluginEvent,
+    PluginId, PluginManifest, PluginView, PriorityHint, PROTOCOL_VERSION, RoutePattern, Selector,
+    SessionCtx, SessionId, SlotContent, SlotRegistration, StateScope, TransformDeclaration,
+    TransformInput, TransformOp, TransformOutput, ViewElement, ViewUpdate,
 };
 pub use error::PdkError;
 pub use view::{
@@ -404,8 +406,9 @@ macro_rules! interactions_export {
 
 /// Generate a WASM `on_load` export for an [`OnLoad`] implementation.
 ///
-/// The host calls this once per pool initialisation. If it returns an error,
-/// the plugin fails to load.
+/// The host calls this once per pool initialisation with a [`PluginInitContext`],
+/// which extends `SessionCtx` with `grants`. Existing plugins that received only
+/// `SessionCtx` continue to work due to `#[serde(flatten)]`.
 ///
 /// # Example
 /// ```ignore
@@ -416,9 +419,9 @@ macro_rules! on_load_export {
     ($plugin:ty) => {
         #[::extism_pdk::plugin_fn]
         pub fn on_load(
-            input: ::extism_pdk::Json<$crate::SessionCtx>,
+            input: ::extism_pdk::Json<$crate::PluginInitContext>,
         ) -> ::extism_pdk::FnResult<()> {
-            let ctx = $crate::PluginCtx::from_session(input.0);
+            let ctx = $crate::PluginCtx::from_session(input.0.session);
             Ok(<$plugin as $crate::OnLoad>::on_load(&ctx)
                 .map_err(|e| ::extism_pdk::Error::msg(e.to_string()))?)
         }
