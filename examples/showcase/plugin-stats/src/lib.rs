@@ -61,18 +61,10 @@ impl DioxusPlugin for StatsPlugin {
                     names: vec!["get_posts".into(), "get_post".into()],
                 },
                 HostCapability::GlobalStateRead {
-                    keys: vec![
-                        VIEWS_KEY.into(),
-                        COMMENT_COUNTS_KEY.into(),
-                        REACTIONS_KEY.into(),
-                    ],
+                    keys: vec![VIEWS_KEY.into(), COMMENT_COUNTS_KEY.into(), REACTIONS_KEY.into()],
                 },
                 HostCapability::GlobalStateWrite {
-                    keys: vec![
-                        VIEWS_KEY.into(),
-                        COMMENT_COUNTS_KEY.into(),
-                        REACTIONS_KEY.into(),
-                    ],
+                    keys: vec![VIEWS_KEY.into(), COMMENT_COUNTS_KEY.into(), REACTIONS_KEY.into()],
                 },
             ],
             event_subscriptions: vec!["comment_posted".into()],
@@ -168,34 +160,23 @@ pub fn render_stats_dashboard(Json(_input): Json<PageRouteInput>) -> FnResult<Js
     let posts: Vec<PostInfo> = serde_json::from_str(&posts_raw)
         .map_err(|e| extism_pdk::Error::msg(format!("parse posts: {e}")))?;
 
-    let views: HashMap<String, u64> =
-        read_global(VIEWS_KEY).map_err(|e| extism_pdk::Error::msg(e.to_string()))?;
-    let comment_counts: HashMap<String, u64> =
-        read_global(COMMENT_COUNTS_KEY).map_err(|e| extism_pdk::Error::msg(e.to_string()))?;
-    let reactions: HashMap<String, Reactions> =
-        read_global(REACTIONS_KEY).map_err(|e| extism_pdk::Error::msg(e.to_string()))?;
+    let views: HashMap<String, u64> = read_global(VIEWS_KEY)
+        .map_err(|e| extism_pdk::Error::msg(e.to_string()))?;
+    let comment_counts: HashMap<String, u64> = read_global(COMMENT_COUNTS_KEY)
+        .map_err(|e| extism_pdk::Error::msg(e.to_string()))?;
+    let reactions: HashMap<String, Reactions> = read_global(REACTIONS_KEY)
+        .map_err(|e| extism_pdk::Error::msg(e.to_string()))?;
 
     let mut rows: Vec<PluginView> = vec![
         div()
             .class("stats-dashboard-header")
             .child(element("h1").child(text("Statistics Dashboard")).build())
-            .child(
-                element("p")
-                    .child(text(
-                        "Powered by the stats plugin · tracks views, comments and reactions.",
-                    ))
-                    .build(),
-            )
+            .child(element("p").child(text("Powered by the stats plugin · tracks views, comments and reactions.")).build())
             .build(),
     ];
 
     if posts.is_empty() {
-        rows.push(
-            div()
-                .class("stats-empty")
-                .child(text("No posts yet."))
-                .build(),
-        );
+        rows.push(div().class("stats-empty").child(text("No posts yet.")).build());
     } else {
         let header_row = div()
             .class("stats-table-header")
@@ -212,14 +193,8 @@ pub fn render_stats_dashboard(Json(_input): Json<PageRouteInput>) -> FnResult<Js
                 div()
                     .class("stats-table-row")
                     .child(span(&post.title))
-                    .child(span(format!(
-                        "{}",
-                        views.get(&post.slug).copied().unwrap_or(0)
-                    )))
-                    .child(span(format!(
-                        "{}",
-                        comment_counts.get(&post.slug).copied().unwrap_or(0)
-                    )))
+                    .child(span(format!("{}", views.get(&post.slug).copied().unwrap_or(0))))
+                    .child(span(format!("{}", comment_counts.get(&post.slug).copied().unwrap_or(0))))
                     .child(span(format!("{}", r.likes)))
                     .child(span(format!("{}", r.dislikes)))
                     .build(),
@@ -233,7 +208,9 @@ pub fn render_stats_dashboard(Json(_input): Json<PageRouteInput>) -> FnResult<Js
 
 /// Event handler: fired when `comment_posted` arrives from the comments plugin.
 #[plugin_fn]
-pub fn on_event(Json((event, _session)): Json<(PluginEvent, SessionCtx)>) -> FnResult<()> {
+pub fn on_event(
+    Json((event, _session)): Json<(PluginEvent, SessionCtx)>,
+) -> FnResult<()> {
     if event.name == "comment_posted" {
         let slug = event.payload["post_slug"].as_str().unwrap_or("").to_owned();
         if !slug.is_empty() {
@@ -251,40 +228,33 @@ pub fn hook_post_viewed(
 ) -> FnResult<Json<HookResult>> {
     let slug = call.context["slug"].as_str().unwrap_or("").to_owned();
     if !slug.is_empty() {
-        increment_count(VIEWS_KEY, &slug).map_err(|e| extism_pdk::Error::msg(e.to_string()))?;
+        increment_count(VIEWS_KEY, &slug)
+            .map_err(|e| extism_pdk::Error::msg(e.to_string()))?;
     }
-    Ok(Json(HookResult::Continue {
-        context: call.context,
-    }))
+    Ok(Json(HookResult::Continue { context: call.context }))
 }
 
 /// Route transform: injects a "trending" banner before the home page content.
 #[plugin_fn]
-pub fn transform_home_banner(
-    Json(_input): Json<TransformInput>,
-) -> FnResult<Json<TransformOutput>> {
-    let views: HashMap<String, u64> =
-        read_global(VIEWS_KEY).map_err(|e| extism_pdk::Error::msg(e.to_string()))?;
+pub fn transform_home_banner(Json(_input): Json<TransformInput>) -> FnResult<Json<TransformOutput>> {
+    let views: HashMap<String, u64> = read_global(VIEWS_KEY)
+        .map_err(|e| extism_pdk::Error::msg(e.to_string()))?;
 
-    let banner = if let Some((top_slug, top_count)) = views.iter().max_by_key(|&(_, v)| v) {
+    let banner = if let Some((top_slug, top_count)) =
+        views.iter().max_by_key(|&(_, v)| v)
+    {
         div()
             .class("stats-trending-banner")
             .child(
                 element("p")
-                    .child(text(format!(
-                        "🔥 Trending: /{top_slug}  ({top_count} views)"
-                    )))
+                    .child(text(format!("🔥 Trending: /{top_slug}  ({top_count} views)")))
                     .build(),
             )
             .build()
     } else {
         div()
             .class("stats-trending-banner stats-trending-banner--empty")
-            .child(
-                element("p")
-                    .child(text("📊 View any post to start tracking statistics."))
-                    .build(),
-            )
+            .child(element("p").child(text("📊 View any post to start tracking statistics.")).build())
             .build()
     };
 
@@ -303,33 +273,28 @@ pub fn on_interaction(
     } else if let Some(rest) = id.strip_prefix("dislike:") {
         ("dislike", rest.to_owned())
     } else {
-        return Ok(Json(ViewUpdate {
-            view: None,
-            events: vec![],
-        }));
+        return Ok(Json(ViewUpdate { view: None, events: vec![] }));
     };
 
-    let mut reactions: HashMap<String, Reactions> =
-        read_global(REACTIONS_KEY).map_err(|e| extism_pdk::Error::msg(e.to_string()))?;
+    let mut reactions: HashMap<String, Reactions> = read_global(REACTIONS_KEY)
+        .map_err(|e| extism_pdk::Error::msg(e.to_string()))?;
     let r = reactions.entry(slug.clone()).or_default();
     if action == "like" {
         r.likes += 1;
     } else {
         r.dislikes += 1;
     }
-    write_global(REACTIONS_KEY, &reactions).map_err(|e| extism_pdk::Error::msg(e.to_string()))?;
+    write_global(REACTIONS_KEY, &reactions)
+        .map_err(|e| extism_pdk::Error::msg(e.to_string()))?;
 
-    let views =
-        read_count_map(VIEWS_KEY, &slug).map_err(|e| extism_pdk::Error::msg(e.to_string()))?;
+    let views = read_count_map(VIEWS_KEY, &slug)
+        .map_err(|e| extism_pdk::Error::msg(e.to_string()))?;
     let comments = read_count_map(COMMENT_COUNTS_KEY, &slug)
         .map_err(|e| extism_pdk::Error::msg(e.to_string()))?;
     let updated_reactions = reactions.get(&slug).cloned().unwrap_or_default();
     let new_view = build_stats_view(&slug, views, comments, &updated_reactions);
 
-    Ok(Json(ViewUpdate {
-        view: Some(new_view),
-        events: vec![],
-    }))
+    Ok(Json(ViewUpdate { view: Some(new_view), events: vec![] }))
 }
 
 // ── View builder ──────────────────────────────────────────────────────────────
@@ -376,9 +341,7 @@ fn build_stats_view(slug: &str, views: u64, comments: u64, reactions: &Reactions
 }
 
 fn span(content: impl Into<String>) -> PluginView {
-    dioxus_extism_pdk::span()
-        .child(text(content.into()))
-        .build()
+    dioxus_extism_pdk::span().child(text(content.into())).build()
 }
 
 // ── State helpers ─────────────────────────────────────────────────────────────
@@ -398,8 +361,8 @@ fn write_global<T: Serialize>(key: &str, value: &T) -> Result<(), PdkError> {
 }
 
 fn read_session_str(key: &str) -> Result<String, PdkError> {
-    let raw =
-        unsafe { host_fns::dx_state_get(key) }.map_err(|e| PdkError::HostFn(e.to_string()))?;
+    let raw = unsafe { host_fns::dx_state_get(key) }
+        .map_err(|e| PdkError::HostFn(e.to_string()))?;
     let opt: Option<String> = serde_json::from_str(&raw).map_err(PdkError::Json)?;
     Ok(opt.unwrap_or_default())
 }

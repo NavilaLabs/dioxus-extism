@@ -18,10 +18,7 @@ pub fn find_shallow_matching<'a>(
         NodeSelector::First => children.first().into_iter().collect(),
         NodeSelector::Last => children.last().into_iter().collect(),
         NodeSelector::Index(i) => children.get(*i).into_iter().collect(),
-        _ => children
-            .iter()
-            .filter(|c| node_matches(c, selector))
-            .collect(),
+        _ => children.iter().filter(|c| node_matches(c, selector)).collect(),
     }
 }
 
@@ -38,11 +35,7 @@ pub fn find_recursive_matching<'a>(
     out
 }
 
-fn collect_recursive<'a>(
-    view: &'a PluginView,
-    selector: &NodeSelector,
-    out: &mut Vec<&'a PluginView>,
-) {
+fn collect_recursive<'a>(view: &'a PluginView, selector: &NodeSelector, out: &mut Vec<&'a PluginView>) {
     if node_matches(view, selector) {
         out.push(view);
     }
@@ -85,9 +78,9 @@ pub fn node_matches(view: &PluginView, selector: &NodeSelector) -> bool {
         }
         NodeSelector::DataAttr(k, v) => {
             if let PluginView::Element(el) = view {
-                el.attrs
-                    .iter()
-                    .any(|(ak, av)| ak == k && matches!(av, AttrValue::String(s) if s == v))
+                el.attrs.iter().any(|(ak, av)| {
+                    ak == k && matches!(av, AttrValue::String(s) if s == v)
+                })
             } else {
                 false
             }
@@ -153,10 +146,7 @@ pub(crate) fn resolve_target_in_view(wrapper: PluginView, target: PluginView) ->
                 .into_iter()
                 .map(|c| resolve_target_in_view(c, target.clone()))
                 .collect();
-            PluginView::Element(ViewElement {
-                children: new_children,
-                ..el
-            })
+            PluginView::Element(ViewElement { children: new_children, ..el })
         }
         PluginView::Fragment(children) => PluginView::Fragment(
             children

@@ -1,17 +1,17 @@
 use dioxus_extism_host::{PluginRuntimeBuilder, PluginSource};
 use dioxus_extism_protocol::{
-    ClientCapabilities, PROTOCOL_VERSION, PluginId, SessionCtx, SessionId,
+    ClientCapabilities, PluginId, SessionCtx, SessionId, PROTOCOL_VERSION,
 };
 
 /// hello-plugin WASM built for wasm32-unknown-unknown release.
-const HELLO_WASM: &[u8] =
-    include_bytes!("../../../target/wasm32-unknown-unknown/release/hello_plugin_plugin.wasm");
+const HELLO_WASM: &[u8] = include_bytes!(
+    "../../../target/wasm32-unknown-unknown/release/hello_plugin_plugin.wasm"
+);
 
 fn test_session() -> SessionCtx {
     SessionCtx {
         session_id: SessionId("test-session".into()),
         user_id: None,
-        email: None,
         client: ClientCapabilities {
             protocol_version: PROTOCOL_VERSION,
             app_version: 0,
@@ -51,11 +51,7 @@ async fn plugin_appears_in_slot_registry() {
         .await
         .expect("render_slot failed");
 
-    assert_eq!(
-        contents.len(),
-        1,
-        "hello plugin should contribute one slot item"
-    );
+    assert_eq!(contents.len(), 1, "hello plugin should contribute one slot item");
     assert_eq!(
         contents[0].plugin_id,
         PluginId("example/hello".into()),

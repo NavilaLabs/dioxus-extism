@@ -5,9 +5,7 @@
 use std::sync::Arc;
 
 use dioxus_extism_host::{PluginRuntimeBuilder, PluginRuntimeError, PluginSource};
-use dioxus_extism_protocol::{
-    ClientCapabilities, PROTOCOL_VERSION, PluginId, SessionCtx, SessionId,
-};
+use dioxus_extism_protocol::{ClientCapabilities, PluginId, SessionCtx, SessionId, PROTOCOL_VERSION};
 use serde::{Deserialize, Serialize};
 
 macro_rules! fixture {
@@ -25,7 +23,6 @@ fn default_session() -> SessionCtx {
     SessionCtx {
         session_id: SessionId("dispatch-test".into()),
         user_id: None,
-        email: None,
         client: ClientCapabilities {
             protocol_version: PROTOCOL_VERSION,
             app_version: 0,
@@ -69,13 +66,7 @@ async fn compute_fn_returns_incremented_value() {
         .expect("build failed");
 
     let result: serde_json::Value = runtime
-        .call_plugin(
-            &echo_id(),
-            "compute_fn",
-            &serde_json::json!({"n": 41}),
-            &default_session(),
-            &(),
-        )
+        .call_plugin(&echo_id(), "compute_fn", &serde_json::json!({"n": 41}), &default_session(), &())
         .await
         .expect("call_plugin failed");
 
@@ -113,19 +104,10 @@ async fn disabled_plugin_returns_error() {
         .await
         .expect("build failed");
 
-    runtime
-        .disable_plugin(&echo_id())
-        .await
-        .expect("disable failed");
+    runtime.disable_plugin(&echo_id()).await.expect("disable failed");
 
     let result: Result<serde_json::Value, _> = runtime
-        .call_plugin(
-            &echo_id(),
-            "echo_fn",
-            &serde_json::json!({}),
-            &default_session(),
-            &(),
-        )
+        .call_plugin(&echo_id(), "echo_fn", &serde_json::json!({}), &default_session(), &())
         .await;
 
     assert!(
@@ -143,13 +125,7 @@ async fn unknown_export_returns_call_failed() {
         .expect("build failed");
 
     let result: Result<serde_json::Value, _> = runtime
-        .call_plugin(
-            &echo_id(),
-            "nonexistent_export",
-            &serde_json::json!({}),
-            &default_session(),
-            &(),
-        )
+        .call_plugin(&echo_id(), "nonexistent_export", &serde_json::json!({}), &default_session(), &())
         .await;
 
     assert!(
@@ -178,13 +154,7 @@ async fn struct_input_round_trips_via_serde() {
         .await
         .expect("call_plugin failed");
 
-    assert_eq!(
-        result,
-        Payload {
-            name: "test".into(),
-            count: 7
-        }
-    );
+    assert_eq!(result, Payload { name: "test".into(), count: 7 });
 }
 
 #[tokio::test]

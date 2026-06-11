@@ -4,9 +4,9 @@ use std::sync::Arc;
 
 use dioxus::prelude::*;
 use dioxus_extism_protocol::{
-    AttrValue, ClientCapabilities, DomEvent, HandlerId, HostComponentRef, OverrideMap,
-    PROTOCOL_VERSION, PluginId, PluginView, RouteTransforms, SessionContextProvider, SessionId,
-    SlotContent, SsrRouteOutput, ViewElement, ViewUpdate,
+    AttrValue, ClientCapabilities, DomEvent, HandlerId, HostComponentRef, OverrideMap, PluginId,
+    PluginView, RouteTransforms, SessionId, SlotContent, SsrRouteOutput, ViewElement, ViewUpdate,
+    PROTOCOL_VERSION,
 };
 
 use crate::server_fns::{
@@ -47,7 +47,7 @@ pub struct HostComponentRegistry {
 }
 
 impl HostComponentRegistry {
-    #[must_use]
+    #[must_use] 
     pub fn new() -> Self {
         Self::default()
     }
@@ -69,7 +69,7 @@ impl HostComponentRegistry {
     }
 
     /// Returns the names of all registered host components.
-    #[must_use]
+    #[must_use] 
     pub fn names(&self) -> Vec<String> {
         self.inner.keys().cloned().collect()
     }
@@ -121,12 +121,8 @@ fn use_context_or_default<T: 'static + Clone + Default>() -> T {
 /// Generic over `HostCtx`: the host installs `Arc<HostCtx>` in the Dioxus
 /// context tree via `use_context_provider`; this component reads it with
 /// `try_use_context`.  For `HostCtx = ()` no provider is needed.
-///
-/// When `HostCtx` implements [`SessionContextProvider`], the user identity
-/// fields (`user_id`, `email`) are forwarded to the plugin's `slot_render`
-/// export via the server call, allowing plugins to personalise their output.
 #[component]
-pub fn PluginSlot<HostCtx: 'static + Clone + SessionContextProvider>(
+pub fn PluginSlot<HostCtx: 'static>(
     name: String,
     #[props(default)] loading: Option<Element>,
     #[props(default)] fallback: Option<Element>,
@@ -136,33 +132,16 @@ pub fn PluginSlot<HostCtx: 'static + Clone + SessionContextProvider>(
     #[props(default)]
     _host_ctx_ty: PhantomData<Arc<HostCtx>>,
 ) -> Element {
-    // The HostCtx type IS the context value (e.g. Arc<ZeitrakPluginCtx>), not the
-    // inner type.  `try_use_context::<HostCtx>()` reads the value directly from the
-    // Dioxus context tree.  The `PhantomData<Arc<HostCtx>>` field in Props is kept
-    // for backward compat with existing callers using `PluginSlot::<Arc<Ctx>>`.
-    let host_ctx = try_use_context::<HostCtx>();
+    let _host_ctx = try_use_context::<Arc<HostCtx>>();
     let session_id = use_session_id();
     let client_caps = use_context::<ClientCapabilities>();
-
-    // Extract plain-data identity fields so they can be captured as `'static + Send`
-    // values in the `use_resource` closure without pulling in the HostCtx.
-    // These are recomputed on every render so they stay in sync when the context
-    // provider updates (e.g. after login).
-    let ctx_user_id = host_ctx
-        .as_ref()
-        .and_then(|ctx| ctx.session_user_id().map(str::to_owned));
-    let ctx_email = host_ctx
-        .as_ref()
-        .and_then(|ctx| ctx.session_email().map(str::to_owned));
 
     let name_clone = name;
     let contents = use_resource(move || {
         let name = name_clone.clone();
         let sid: SessionId = session_id.read().clone();
         let caps = client_caps.clone();
-        let uid = ctx_user_id.clone();
-        let em = ctx_email.clone();
-        async move { get_slot_content(name, sid, caps, uid, em).await }
+        async move { get_slot_content(name, sid, caps).await }
     });
 
     match contents.read().as_ref() {
@@ -190,8 +169,21 @@ pub fn PluginSlot<HostCtx: 'static + Clone + SessionContextProvider>(
 /// Fast path: if the `OverrideMap` (provided by `PluginBootProvider`) does not list
 /// `name` in `overridden_components`, `fallback` renders immediately with zero network
 /// overhead. No `use_resource` call and no server function invocation occur.
+///
+/// Generic over `HostCtx`: the host installs `Arc<HostCtx>` in the Dioxus
+/// context tree via `use_context_provider`; this component reads it with
+/// `try_use_context`.  For `HostCtx = ()` no provider is needed.
 #[component]
-pub fn OverridableComponent(name: String, props: serde_json::Value, fallback: Element) -> Element {
+pub fn OverridableComponent<HostCtx: 'static>(
+    name: String,
+    props: serde_json::Value,
+    fallback: Element,
+    /// Marker that anchors the `HostCtx` generic to the Props struct.
+    /// Defaults to `PhantomData`; hosts supply `Arc<HostCtx>` via context.
+    #[props(default)]
+    _host_ctx_ty: PhantomData<Arc<HostCtx>>,
+) -> Element {
+    let _host_ctx = try_use_context::<Arc<HostCtx>>();
     let override_map: Signal<OverrideMap> = use_context::<Signal<OverrideMap>>();
     if !override_map.read().overridden_components.contains(&name) {
         return fallback;
@@ -207,7 +199,11 @@ pub fn OverridableComponent(name: String, props: serde_json::Value, fallback: El
 /// hook position — calling it conditionally in the outer component would violate the
 /// Dioxus hook ordering rules.
 #[component]
-fn OverridableComponentInner(name: String, props: serde_json::Value, fallback: Element) -> Element {
+fn OverridableComponentInner(
+    name: String,
+    props: serde_json::Value,
+    fallback: Element,
+) -> Element {
     let session_id = use_session_id();
     let client_caps = use_context::<ClientCapabilities>();
 
@@ -252,7 +248,7 @@ fn OverridableComponentInner(name: String, props: serde_json::Value, fallback: E
 /// On wasm32 targets this reads `window.location.pathname` directly.
 /// On non-wasm32 targets (desktop, server) it returns `"/"` — route-based
 /// transforms are a web-only feature and will not trigger on those targets.
-#[must_use]
+#[must_use] 
 pub fn use_current_path() -> String {
     #[cfg(target_arch = "wasm32")]
     {
@@ -286,11 +282,7 @@ where
     let _host_ctx = try_use_context::<Arc<HostCtx>>();
     let path = use_current_path();
     let override_map: Signal<OverrideMap> = use_context::<Signal<OverrideMap>>();
-    let has_transforms = override_map
-        .read()
-        .route_patterns
-        .iter()
-        .any(|p| p.matches(&path));
+    let has_transforms = override_map.read().route_patterns.iter().any(|p| p.matches(&path));
 
     if has_transforms {
         rsx! {
@@ -475,11 +467,7 @@ pub fn PluginViewRenderer(
 
     // Root reads from the signal so interactions can update it.
     // Children render their passed `view` directly (they're part of the root's tree).
-    let render_view = if already_inside {
-        view
-    } else {
-        view_signal.read().clone()
-    };
+    let render_view = if already_inside { view } else { view_signal.read().clone() };
 
     match render_view {
         PluginView::Empty => rsx! {},
@@ -598,30 +586,14 @@ fn InteractiveInput(
 }
 
 #[allow(clippy::too_many_lines, clippy::needless_pass_by_value)]
-fn render_element(
-    el: ViewElement,
-    session_id: Signal<SessionId>,
-    content_slot: Option<Element>,
-) -> Element {
-    let ViewElement {
-        tag,
-        attrs,
-        handlers,
-        children,
-        ..
-    } = el;
+fn render_element(el: ViewElement, session_id: Signal<SessionId>, content_slot: Option<Element>) -> Element {
+    let ViewElement { tag, attrs, handlers, children, .. } = el;
 
     let str_attr = |name: &str| -> String {
         attrs
             .iter()
             .find(|(k, _)| k == name)
-            .and_then(|(_, v)| {
-                if let AttrValue::String(s) = v {
-                    Some(s.clone())
-                } else {
-                    None
-                }
-            })
+            .and_then(|(_, v)| if let AttrValue::String(s) = v { Some(s.clone()) } else { None })
             .unwrap_or_default()
     };
 

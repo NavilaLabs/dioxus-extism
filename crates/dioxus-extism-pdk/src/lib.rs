@@ -43,40 +43,41 @@ mod view;
 pub use extism_pdk;
 
 pub use dioxus_extism_protocol::{
-    ApiRequest, ApiResponse, ApiRouteDeclaration, AttrValue, BoundEventHandler, CallError,
-    CallPluginGrant, CapabilityKind, ClientCapabilities, DenialReason, DomEvent, ExportsManifest,
-    GrantDecision, GrantRequest, GrantStatus, HandlerId, HookCall, HookRegistration, HookResult,
-    HostCapability, HostComponentRef, HttpMethod, NodeSelector, PROTOCOL_VERSION,
-    PageRouteDeclaration, PageRouteInput, PageRouteOutput, PluginDependency, PluginEvent, PluginId,
-    PluginInitContext, PluginManifest, PluginView, PriorityHint, PublicFunctionDecl, RoutePattern,
-    Selector, SessionCtx, SessionId, SlotContent, SlotRegistration, StateScope,
-    TransformDeclaration, TransformInput, TransformOp, TransformOutput, VersionRange, ViewElement,
-    ViewUpdate,
+    ApiRequest, ApiResponse, ApiRouteDeclaration, CallError, CallPluginGrant, CapabilityKind,
+    DenialReason, ExportsManifest, GrantDecision, GrantRequest, GrantStatus, HttpMethod,
+    PageRouteDeclaration, PageRouteInput, PageRouteOutput, PluginDependency, PluginInitContext,
+    PublicFunctionDecl, VersionRange,
+    AttrValue, BoundEventHandler, ClientCapabilities, DomEvent, HandlerId, HookCall,
+    HookRegistration, HookResult, HostCapability, HostComponentRef, NodeSelector, PluginEvent,
+    PluginId, PluginManifest, PluginView, PriorityHint, PROTOCOL_VERSION, RoutePattern, Selector,
+    SessionCtx, SessionId, SlotContent, SlotRegistration, StateScope, TransformDeclaration,
+    TransformInput, TransformOp, TransformOutput, ViewElement, ViewUpdate,
 };
 pub use error::PdkError;
 pub use view::{
-    HostComponentBuilder, ViewBuilder, a, article, aside, button, div, element, footer, form,
-    fragment, h1, h2, h3, h4, h5, h6, header, host, img, incompatible, incompatible_with_fallback,
-    input, label, li, nav, ol, option, original_content, original_target, p, section, select, span,
-    table, tbody, td, text, textarea, th, thead, tr, ul,
+    a, article, aside, button, div, element, footer, form, fragment,
+    h1, h2, h3, h4, h5, h6, header, host, img, incompatible,
+    incompatible_with_fallback, input, label, li, nav, ol, option, original_content,
+    original_target, p, section, select, span, table, tbody, td, text, textarea,
+    th, thead, tr, ul, HostComponentBuilder, ViewBuilder,
 };
 
 /// Prelude for plugin authors — import everything with one `use`.
 pub mod prelude {
     pub use crate::{
-        ApiRequest, ApiResponse, ApiRouteDeclaration, AttrValue, BoundEventHandler,
-        ClientCapabilities, DioxusPlugin, DomEvent, EventSubscriber, HandlerId, HookCall,
-        HookHandler, HookRegistration, HookResult, HostCapability, HostComponentBuilder,
-        HostComponentRef, HttpMethod, InteractionHandler, NodeSelector, OnLoad, OnUnload,
-        PROTOCOL_VERSION, PageRouteDeclaration, PageRouteInput, PageRouteOutput, PdkError,
-        PluginCtx, PluginEvent, PluginId, PluginManifest, PluginView, PriorityHint, RoutePattern,
-        Selector, SessionCtx, SessionId, SlotContent, SlotProvider, SlotRegistration, StateScope,
-        TransformDeclaration, TransformInput, TransformOp, TransformOutput, TransformProvider,
-        ViewBuilder, ViewElement, ViewUpdate, a, article, aside, button, div, element, footer,
-        form, fragment, h1, h2, h3, h4, h5, h6, header, host, img, incompatible,
+        ApiRequest, ApiResponse, ApiRouteDeclaration, HttpMethod,
+        PageRouteDeclaration, PageRouteInput, PageRouteOutput,
+        AttrValue, BoundEventHandler, ClientCapabilities, DioxusPlugin, DomEvent, EventSubscriber,
+        HandlerId, HookCall, HookHandler, HookRegistration, HookResult, HostCapability, HostComponentRef,
+        InteractionHandler, NodeSelector, OnLoad, OnUnload, PdkError, PluginCtx, PluginEvent,
+        PluginId, PluginManifest, PluginView, PriorityHint, PROTOCOL_VERSION, RoutePattern, Selector, SessionCtx,
+        SessionId, SlotContent, SlotRegistration, SlotProvider, StateScope, TransformDeclaration,
+        TransformInput, TransformOp, TransformOutput, TransformProvider, ViewElement, ViewUpdate,
+        a, article, aside, button, div, element, footer, form, fragment,
+        h1, h2, h3, h4, h5, h6, header, host, img, incompatible,
         incompatible_with_fallback, input, label, li, nav, ol, option, original_content,
-        original_target, p, section, select, span, table, tbody, td, text, textarea, th, thead, tr,
-        ul,
+        original_target, p, section, select, span, table, tbody, td, text, textarea,
+        th, thead, tr, ul, HostComponentBuilder, ViewBuilder,
     };
 }
 
@@ -155,7 +156,7 @@ pub struct PluginCtx {
 
 impl PluginCtx {
     /// Construct from the session context received on each call.
-    #[must_use]
+    #[must_use] 
     pub fn from_session(session: SessionCtx) -> Self {
         let client = session.client.clone();
         Self {
@@ -199,21 +200,21 @@ pub mod host_fns {
 
 /// Wire up WASM exports for a `DioxusPlugin` type.
 ///
-/// Generates a `manifest()` export and a single `slot_render` export that
-/// dispatches to the correct [`SlotProvider`] based on the slot name passed by
-/// the host at runtime. Multiple slot providers can be listed in `slots: [...]`.
-///
+/// Generates a `manifest()` export and one `slot_render` export per slot provider.
 /// For hooks, transforms, events, interactions, and lifecycle hooks use the
 /// dedicated standalone macros: [`hook_export!`], [`transform_export!`],
 /// [`events_export!`], [`interactions_export!`], [`on_load_export!`], [`on_unload_export!`].
 ///
 /// # Example
 /// ```ignore
-/// plugin! { type: HelloPlugin, slots: [GreetingSlot, DashboardCard] }
+/// plugin! { type: HelloPlugin, slots: [HelloPlugin] }
 ///
 /// // Optional additional exports (call after plugin!):
 /// hook_export!(HelloPlugin, before_save);
+/// transform_export!(HelloPlugin, wrap_header);
 /// on_load_export!(HelloPlugin);
+/// events_export!(HelloPlugin);
+/// interactions_export!(HelloPlugin);
 /// ```
 #[macro_export]
 macro_rules! plugin {
@@ -227,7 +228,7 @@ macro_rules! plugin {
             ))
         }
 
-        $crate::__generate_slot_render!($($slot_impl,)*);
+        $crate::__plugin_slots_inner!(0usize, $($slot_impl,)*);
     };
     (type: $plugin:ty $(,)?) => {
         #[::extism_pdk::plugin_fn]
@@ -241,37 +242,15 @@ macro_rules! plugin {
     };
 }
 
-/// Generate a single `slot_render` WASM export that dispatches to the matching
-/// [`SlotProvider`] based on the slot name supplied by the host at call time.
-///
-/// The host passes `(slot_name, SessionCtx)` as the input; this macro expands to
-/// an if-chain over every listed slot type's `SLOT_NAME` constant, returning the
-/// rendered view for the first match, or a `PluginView::Incompatible` when no
-/// provider matches.
-///
-/// Used internally by [`plugin!`] — do not call directly.
 #[doc(hidden)]
 #[macro_export]
-macro_rules! __generate_slot_render {
-    ($($slot_impl:ty,)*) => {
-        #[::extism_pdk::plugin_fn]
-        pub fn slot_render(
-            input: ::extism_pdk::Json<(::std::string::String, $crate::SessionCtx)>,
-        ) -> ::extism_pdk::FnResult<::extism_pdk::Json<$crate::PluginView>> {
-            let (slot_name, session) = input.0;
-            let ctx = $crate::PluginCtx::from_session(session);
-            $(
-                if slot_name == <$slot_impl as $crate::SlotProvider>::SLOT_NAME {
-                    let view = <$slot_impl as $crate::SlotProvider>::render(&ctx)
-                        .map_err(|e| ::extism_pdk::Error::msg(e.to_string()))?;
-                    return Ok(::extism_pdk::Json(view));
-                }
-            )*
-            Ok(::extism_pdk::Json($crate::PluginView::Incompatible {
-                reason: format!("plugin has no provider for slot '{slot_name}'"),
-                fallback: None,
-            }))
-        }
+macro_rules! __plugin_slots_inner {
+    // base case
+    ($n:expr,) => {};
+    // recursive: consume first slot type
+    ($n:expr, $first:ty, $($rest:ty,)*) => {
+        $crate::__slot_fn!($first);
+        $crate::__plugin_slots_inner!($n + 1usize, $($rest,)*);
     };
 }
 
@@ -296,6 +275,26 @@ macro_rules! api_route_fn {
             let result: Result<$crate::ApiResponse, $crate::PdkError> = ($handler)(input.0);
             let resp = result.map_err(|e| ::extism_pdk::Error::msg(e.to_string()))?;
             Ok(::extism_pdk::Json(resp))
+        }
+    };
+}
+
+/// Generate a WASM export for a single `SlotProvider` implementation.
+///
+/// The export is named `slot_render` — Phase 1 only supports one slot per plugin.
+/// Phase 2+ will generate per-name exports via a proc-macro.
+#[doc(hidden)]
+#[macro_export]
+macro_rules! __slot_fn {
+    ($slot_impl:ty) => {
+        #[::extism_pdk::plugin_fn]
+        pub fn slot_render(
+            input: ::extism_pdk::Json<$crate::SessionCtx>,
+        ) -> ::extism_pdk::FnResult<::extism_pdk::Json<$crate::PluginView>> {
+            let ctx = $crate::PluginCtx::from_session(input.0);
+            let view = <$slot_impl as $crate::SlotProvider>::render(&ctx)
+                .map_err(|e| ::extism_pdk::Error::msg(e.to_string()))?;
+            Ok(::extism_pdk::Json(view))
         }
     };
 }
@@ -395,7 +394,9 @@ macro_rules! interactions_export {
             let (handler_id, event_data, session) = input.0;
             let ctx = $crate::PluginCtx::from_session(session);
             let result = <$plugin as $crate::InteractionHandler>::on_interaction(
-                handler_id, event_data, &ctx,
+                handler_id,
+                event_data,
+                &ctx,
             )
             .map_err(|e| ::extism_pdk::Error::msg(e.to_string()))?;
             Ok(::extism_pdk::Json(result))
@@ -435,7 +436,11 @@ macro_rules! on_load_export {
 /// # Errors
 /// Returns `CallError` if the capability is denied, the target is unavailable,
 /// the stack depth is exceeded, or deserialisation fails.
-pub fn call_plugin<I, O>(target: &PluginId, function: &str, input: &I) -> Result<O, CallError>
+pub fn call_plugin<I, O>(
+    target: &PluginId,
+    function: &str,
+    input: &I,
+) -> Result<O, CallError>
 where
     I: serde::Serialize,
     O: serde::de::DeserializeOwned,
@@ -448,7 +453,8 @@ where
             pub fn dx_call_plugin(target: &str, function: &str, input: String) -> String;
         }
     }
-    let input_json = serde_json::to_string(input).map_err(|_| CallError::DeserializationError)?;
+    let input_json = serde_json::to_string(input)
+        .map_err(|_| CallError::DeserializationError)?;
     #[allow(unsafe_code)]
     let raw = unsafe { inner::dx_call_plugin(target.0.as_str(), function, input_json) }
         .map_err(|_| CallError::TargetUnavailable)?;

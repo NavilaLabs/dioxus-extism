@@ -69,10 +69,10 @@ impl BundleSource {
         match self {
             Self::Directory(dir) => {
                 let toml_path = dir.join("bundle.toml");
-                let contents =
-                    std::fs::read_to_string(&toml_path).map_err(PluginRuntimeError::Io)?;
-                toml::from_str::<BundleManifest>(&contents)
-                    .map_err(|e| PluginRuntimeError::Pool(format!("bundle.toml parse error: {e}")))
+                let contents = std::fs::read_to_string(&toml_path).map_err(PluginRuntimeError::Io)?;
+                toml::from_str::<BundleManifest>(&contents).map_err(|e| {
+                    PluginRuntimeError::Pool(format!("bundle.toml parse error: {e}"))
+                })
             }
         }
     }
@@ -109,17 +109,14 @@ pub fn synthesise_trust_group(
             if sibling_id == id {
                 continue;
             }
-            let functions = public_fns_by_id
-                .get(sibling_id)
-                .cloned()
-                .unwrap_or_default();
+            let functions = public_fns_by_id.get(sibling_id).cloned().unwrap_or_default();
             if functions.is_empty() {
                 continue;
             }
             deps.push(dioxus_extism_protocol::PluginDependency::new(
                 sibling_id.0.clone(),
-                "*",  // any version — bundle siblings install together
-                true, // required (both installed as a unit)
+                "*",     // any version — bundle siblings install together
+                true,    // required (both installed as a unit)
                 functions,
             ));
         }
@@ -145,13 +142,11 @@ pub fn find_wasm_in_dir(dir: &Path) -> Result<std::path::PathBuf, PluginRuntimeE
         .collect();
     match wasms.len() {
         0 => Err(PluginRuntimeError::Pool(format!(
-            "no .wasm file found in {}",
-            dir.display()
+            "no .wasm file found in {}", dir.display()
         ))),
         1 => Ok(wasms.into_iter().next().expect("len == 1")),
         n => Err(PluginRuntimeError::Pool(format!(
-            "{n} .wasm files found in {}; expected exactly one",
-            dir.display()
+            "{n} .wasm files found in {}; expected exactly one", dir.display()
         ))),
     }
 }

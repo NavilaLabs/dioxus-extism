@@ -53,14 +53,8 @@ async fn unsigned_loads_with_verified_false() {
     let tag = runtime.plugin_trust_tag(&id).await;
     assert!(tag.is_some(), "plugin should exist");
     let tag = tag.unwrap();
-    assert!(
-        !tag.verified,
-        "unsigned plugin should have verified == false"
-    );
-    assert!(
-        tag.signer_key_id.is_none(),
-        "signer_key_id should be None for unsigned"
-    );
+    assert!(!tag.verified, "unsigned plugin should have verified == false");
+    assert!(tag.signer_key_id.is_none(), "signer_key_id should be None for unsigned");
 }
 
 #[tokio::test]
@@ -71,11 +65,7 @@ async fn valid_signature_loads_with_verified_true() {
     let runtime = PluginRuntimeBuilder::<()>::new()
         .add_plugin_with_config(
             src(SLOT_NORMAL_WASM),
-            PluginInstallConfig {
-                signature: Some(sig),
-                key_id: None,
-                ..Default::default()
-            },
+            PluginInstallConfig { signature: Some(sig), key_id: None, ..Default::default() },
         )
         .with_trust_key("key1", pub_key)
         .build()
@@ -83,14 +73,8 @@ async fn valid_signature_loads_with_verified_true() {
         .expect("build failed");
 
     let id = PluginId("test/slot-normal".into());
-    let tag = runtime
-        .plugin_trust_tag(&id)
-        .await
-        .expect("plugin not found");
-    assert!(
-        tag.verified,
-        "valid signature should yield verified == true"
-    );
+    let tag = runtime.plugin_trust_tag(&id).await.expect("plugin not found");
+    assert!(tag.verified, "valid signature should yield verified == true");
     assert_eq!(tag.signer_key_id.as_deref(), Some("key1"));
 }
 
@@ -104,8 +88,7 @@ async fn require_signature_rejects_unsigned() {
 
     assert!(
         matches!(result, Err(PluginRuntimeError::UntrustedPlugin(_))),
-        "expected UntrustedPlugin for unsigned plugin with require_signature, got: {:?}",
-        result.as_ref().err()
+        "expected UntrustedPlugin for unsigned plugin with require_signature, got: {:?}", result.as_ref().err()
     );
 }
 
@@ -119,11 +102,7 @@ async fn require_signature_rejects_tampered_sig() {
     let result = PluginRuntimeBuilder::<()>::new()
         .add_plugin_with_config(
             src(SLOT_NORMAL_WASM),
-            PluginInstallConfig {
-                signature: Some(sig),
-                key_id: None,
-                ..Default::default()
-            },
+            PluginInstallConfig { signature: Some(sig), key_id: None, ..Default::default() },
         )
         .with_trust_key("key1", pub_key)
         .with_require_signature(true)
@@ -132,8 +111,7 @@ async fn require_signature_rejects_tampered_sig() {
 
     assert!(
         matches!(result, Err(PluginRuntimeError::UntrustedPlugin(_))),
-        "tampered signature should be rejected, got: {:?}",
-        result.as_ref().err()
+        "tampered signature should be rejected, got: {:?}", result.as_ref().err()
     );
 }
 
@@ -161,10 +139,7 @@ async fn key_id_hint_selects_correct_key() {
     let _ = pkcs8_a; // suppress unused warning
 
     let id = PluginId("test/slot-normal".into());
-    let tag = runtime
-        .plugin_trust_tag(&id)
-        .await
-        .expect("plugin not found");
+    let tag = runtime.plugin_trust_tag(&id).await.expect("plugin not found");
     assert!(tag.verified);
     assert_eq!(tag.signer_key_id.as_deref(), Some("key-b"));
 }
@@ -196,8 +171,7 @@ async fn wrong_key_id_hint_fails_even_if_other_key_matches() {
 
     assert!(
         matches!(result, Err(PluginRuntimeError::UntrustedPlugin(_))),
-        "wrong key hint should not fall back to matching key, got: {:?}",
-        result.as_ref().err()
+        "wrong key hint should not fall back to matching key, got: {:?}", result.as_ref().err()
     );
 }
 
@@ -212,11 +186,7 @@ async fn all_keys_tried_without_hint() {
     let runtime = PluginRuntimeBuilder::<()>::new()
         .add_plugin_with_config(
             src(SLOT_NORMAL_WASM),
-            PluginInstallConfig {
-                signature: Some(sig),
-                key_id: None,
-                ..Default::default()
-            },
+            PluginInstallConfig { signature: Some(sig), key_id: None, ..Default::default() },
         )
         .with_trust_key("key-a", pub_a)
         .with_trust_key("key-b", pub_b)
@@ -228,14 +198,8 @@ async fn all_keys_tried_without_hint() {
     let _ = (pkcs8_a, pkcs8_c);
 
     let id = PluginId("test/slot-normal".into());
-    let tag = runtime
-        .plugin_trust_tag(&id)
-        .await
-        .expect("plugin not found");
-    assert!(
-        tag.verified,
-        "should find matching key among all registered keys"
-    );
+    let tag = runtime.plugin_trust_tag(&id).await.expect("plugin not found");
+    assert!(tag.verified, "should find matching key among all registered keys");
     assert_eq!(tag.signer_key_id.as_deref(), Some("key-b"));
 }
 
@@ -246,9 +210,7 @@ async fn plugin_trust_tag_none_for_unknown_id() {
         .await
         .expect("build failed");
 
-    let result = runtime
-        .plugin_trust_tag(&PluginId("ghost/plugin".into()))
-        .await;
+    let result = runtime.plugin_trust_tag(&PluginId("ghost/plugin".into())).await;
     assert!(result.is_none(), "unknown plugin id should return None");
 }
 
@@ -266,19 +228,12 @@ async fn install_verifies_trust_tag() {
     let id = runtime
         .install(
             src(SLOT_NORMAL_WASM),
-            PluginInstallConfig {
-                signature: Some(sig),
-                key_id: None,
-                ..Default::default()
-            },
+            PluginInstallConfig { signature: Some(sig), key_id: None, ..Default::default() },
         )
         .await
         .expect("install failed");
 
-    let tag = runtime
-        .plugin_trust_tag(&id)
-        .await
-        .expect("plugin not found after install");
+    let tag = runtime.plugin_trust_tag(&id).await.expect("plugin not found after install");
     assert!(tag.verified, "install should verify trust tag");
     assert_eq!(tag.signer_key_id.as_deref(), Some("install-key"));
 }

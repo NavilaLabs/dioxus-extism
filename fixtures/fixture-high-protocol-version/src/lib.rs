@@ -1,5 +1,5 @@
 use dioxus_extism_pdk::prelude::*;
-use dioxus_extism_pdk::{PROTOCOL_VERSION, plugin};
+use dioxus_extism_pdk::{plugin, PROTOCOL_VERSION};
 
 struct FixtureHighProtocolVersion;
 

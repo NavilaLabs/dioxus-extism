@@ -19,7 +19,7 @@
 use dioxus::prelude::*;
 use dioxus_extism_frontend::{PluginSlotSsr, SsrPluginDataProvider};
 use dioxus_extism_host::{PluginRuntimeBuilder, PluginSource};
-use dioxus_extism_protocol::{ClientCapabilities, PROTOCOL_VERSION, SessionCtx, SessionId};
+use dioxus_extism_protocol::{ClientCapabilities, SessionCtx, SessionId, PROTOCOL_VERSION};
 use std::path::PathBuf;
 
 #[tokio::main]

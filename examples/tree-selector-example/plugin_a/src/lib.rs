@@ -1,5 +1,5 @@
-use dioxus_extism_pdk::plugin;
 use dioxus_extism_pdk::prelude::*;
+use dioxus_extism_pdk::plugin;
 
 /// `plugin_a`: slot provider for "activity-feed".
 ///

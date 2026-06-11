@@ -17,9 +17,9 @@ impl DioxusPlugin for FixtureWrapA {
                 op: TransformOp::Wrap,
                 priority_hint: PriorityHint::High,
             }],
-            host_capabilities: vec![HostCapability::GlobalStateWrite {
-                keys: vec!["received_original".into()],
-            }],
+            host_capabilities: vec![
+                HostCapability::GlobalStateWrite { keys: vec!["received_original".into()] },
+            ],
             ..Default::default()
         }
     }

@@ -21,9 +21,7 @@ impl HookHandler for FixtureHookCancel {
     const HOOK_NAME: &'static str = "test-hook";
 
     fn handle(_call: HookCall, _ctx: &PluginCtx) -> Result<HookResult, PdkError> {
-        Ok(HookResult::Cancel {
-            reason: "test-cancel".into(),
-        })
+        Ok(HookResult::Cancel { reason: "test-cancel".into() })
     }
 }
 

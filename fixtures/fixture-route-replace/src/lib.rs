@@ -22,12 +22,7 @@ impl DioxusPlugin for FixtureRouteReplace {
 
 impl TransformProvider for FixtureRouteReplace {
     fn transform(input: TransformInput, _ctx: &PluginCtx) -> Result<TransformOutput, PdkError> {
-        let id = input
-            .context
-            .route_params
-            .get("id")
-            .cloned()
-            .unwrap_or_default();
+        let id = input.context.route_params.get("id").cloned().unwrap_or_default();
         Ok(TransformOutput {
             view: div().child(text(&format!("replaced-{id}"))).build(),
         })

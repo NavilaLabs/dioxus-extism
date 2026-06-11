@@ -17,12 +17,8 @@ impl DioxusPlugin for FixtureSlotNormal {
                 priority_hint: PriorityHint::Normal,
             }],
             host_capabilities: vec![
-                HostCapability::GlobalStateRead {
-                    keys: vec!["unload_count".into()],
-                },
-                HostCapability::GlobalStateWrite {
-                    keys: vec!["unload_count".into()],
-                },
+                HostCapability::GlobalStateRead { keys: vec!["unload_count".into()] },
+                HostCapability::GlobalStateWrite { keys: vec!["unload_count".into()] },
             ],
             ..Default::default()
         }
@@ -40,9 +36,11 @@ impl SlotProvider for FixtureSlotNormal {
 impl OnUnload for FixtureSlotNormal {
     fn on_unload() -> Result<(), PdkError> {
         unsafe {
-            let raw = host_fns::dx_global_state_get("unload_count").unwrap_or_else(|_| "0".into());
+            let raw = host_fns::dx_global_state_get("unload_count")
+                .unwrap_or_else(|_| "0".into());
             let count: u64 = serde_json::from_str::<u64>(&raw).unwrap_or(0);
-            let encoded = serde_json::to_string(&(count + 1)).map_err(PdkError::Json)?;
+            let encoded =
+                serde_json::to_string(&(count + 1)).map_err(PdkError::Json)?;
             host_fns::dx_global_state_set("unload_count", encoded)
                 .map_err(|e| PdkError::HostFn(e.to_string()))?;
         }

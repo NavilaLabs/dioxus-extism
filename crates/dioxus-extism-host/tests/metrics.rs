@@ -7,9 +7,7 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use dioxus_extism_host::{PluginRuntimeBuilder, PluginSource, RuntimeMetrics};
-use dioxus_extism_protocol::{
-    ClientCapabilities, PROTOCOL_VERSION, PluginId, SessionCtx, SessionId,
-};
+use dioxus_extism_protocol::{ClientCapabilities, PluginId, SessionCtx, SessionId, PROTOCOL_VERSION};
 
 macro_rules! fixture {
     ($name:ident, $path:literal) => {
@@ -29,7 +27,6 @@ fn default_session() -> SessionCtx {
     SessionCtx {
         session_id: SessionId("metrics-test".into()),
         user_id: None,
-        email: None,
         client: ClientCapabilities {
             protocol_version: PROTOCOL_VERSION,
             app_version: 0,
@@ -59,12 +56,10 @@ impl RuntimeMetrics for CapturingMetrics {
         elapsed: Duration,
         success: bool,
     ) {
-        self.calls.lock().unwrap().push((
-            plugin_id.clone(),
-            function_name.to_owned(),
-            elapsed,
-            success,
-        ));
+        self.calls
+            .lock()
+            .unwrap()
+            .push((plugin_id.clone(), function_name.to_owned(), elapsed, success));
     }
 
     fn record_pool_utilization(&self, plugin_id: &PluginId, active: usize, total: usize) {
@@ -88,26 +83,14 @@ async fn record_call_invoked_after_slot_render() {
         .expect("build failed");
 
     let session = default_session();
-    runtime
-        .render_slot("test-slot", &session)
-        .await
-        .expect("render failed");
+    runtime.render_slot("test-slot", &session).await.expect("render failed");
 
     let calls = m.calls.lock().unwrap();
-    assert!(
-        !calls.is_empty(),
-        "record_call should be invoked after slot render"
-    );
+    assert!(!calls.is_empty(), "record_call should be invoked after slot render");
     let success_calls: Vec<_> = calls.iter().filter(|(_, _, _, ok)| *ok).collect();
-    assert!(
-        !success_calls.is_empty(),
-        "at least one successful call should be recorded"
-    );
+    assert!(!success_calls.is_empty(), "at least one successful call should be recorded");
     let all_positive_elapsed = calls.iter().all(|(_, _, d, _)| *d >= Duration::ZERO);
-    assert!(
-        all_positive_elapsed,
-        "elapsed duration must be non-negative"
-    );
+    assert!(all_positive_elapsed, "elapsed duration must be non-negative");
 }
 
 #[tokio::test]
@@ -125,10 +108,7 @@ async fn record_call_success_false_on_slot_failure() {
     let _ = runtime.render_slot("test-slot", &session).await;
 
     let calls = m.calls.lock().unwrap();
-    assert!(
-        !calls.is_empty(),
-        "record_call should be invoked even on failure"
-    );
+    assert!(!calls.is_empty(), "record_call should be invoked even on failure");
     let failure_calls: Vec<_> = calls.iter().filter(|(_, _, _, ok)| !*ok).collect();
     assert!(
         !failure_calls.is_empty(),
@@ -147,20 +127,11 @@ async fn record_pool_utilization_invoked() {
         .expect("build failed");
 
     let session = default_session();
-    runtime
-        .render_slot("test-slot", &session)
-        .await
-        .expect("render failed");
+    runtime.render_slot("test-slot", &session).await.expect("render failed");
 
     let util = m.utilizations.lock().unwrap();
-    assert!(
-        !util.is_empty(),
-        "record_pool_utilization should be invoked during slot render"
-    );
-    assert!(
-        util.iter().all(|(_, active, _)| *active >= 1),
-        "active must be >= 1 when in use"
-    );
+    assert!(!util.is_empty(), "record_pool_utilization should be invoked during slot render");
+    assert!(util.iter().all(|(_, active, _)| *active >= 1), "active must be >= 1 when in use");
 }
 
 #[tokio::test]
@@ -174,10 +145,7 @@ async fn active_never_exceeds_pool_size() {
         .expect("build failed");
 
     let session = default_session();
-    runtime
-        .render_slot("test-slot", &session)
-        .await
-        .expect("render failed");
+    runtime.render_slot("test-slot", &session).await.expect("render failed");
 
     let util = m.utilizations.lock().unwrap();
     for (_, active, total) in util.iter() {
@@ -198,10 +166,7 @@ async fn no_panic_without_metrics_provider() {
 
     let session = default_session();
     let result = runtime.render_slot("test-slot", &session).await;
-    assert!(
-        result.is_ok(),
-        "render_slot should succeed without metrics, got: {result:?}"
-    );
+    assert!(result.is_ok(), "render_slot should succeed without metrics, got: {result:?}");
 }
 
 #[tokio::test]
@@ -217,25 +182,13 @@ async fn record_call_for_call_plugin() {
     let session = default_session();
     let id = PluginId("test/echo-fn".into());
     let _: serde_json::Value = runtime
-        .call_plugin(
-            &id,
-            "echo_fn",
-            &serde_json::json!({"k": "v"}),
-            &session,
-            &(),
-        )
+        .call_plugin(&id, "echo_fn", &serde_json::json!({"k": "v"}), &session, &())
         .await
         .expect("call_plugin failed");
 
     let calls = m.calls.lock().unwrap();
-    let echo_calls: Vec<_> = calls
-        .iter()
-        .filter(|(_, name, _, _)| name == "echo_fn")
-        .collect();
-    assert!(
-        !echo_calls.is_empty(),
-        "record_call should be invoked for call_plugin"
-    );
+    let echo_calls: Vec<_> = calls.iter().filter(|(_, name, _, _)| name == "echo_fn").collect();
+    assert!(!echo_calls.is_empty(), "record_call should be invoked for call_plugin");
     assert!(echo_calls[0].3, "call_plugin echo_fn should succeed");
 }
 
@@ -250,10 +203,7 @@ async fn elapsed_duration_is_plausible() {
         .expect("build failed");
 
     let session = default_session();
-    runtime
-        .render_slot("test-slot", &session)
-        .await
-        .expect("render failed");
+    runtime.render_slot("test-slot", &session).await.expect("render failed");
 
     let calls = m.calls.lock().unwrap();
     for (_, _, elapsed, _) in calls.iter() {
@@ -276,10 +226,7 @@ async fn metrics_called_for_each_plugin_in_multi_plugin_slot() {
         .expect("build failed");
 
     let session = default_session();
-    runtime
-        .render_slot("test-slot", &session)
-        .await
-        .expect("render failed");
+    runtime.render_slot("test-slot", &session).await.expect("render failed");
 
     let calls = m.calls.lock().unwrap();
     let plugin_ids: std::collections::HashSet<_> =

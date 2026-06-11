@@ -1,5 +1,5 @@
 use dioxus_extism_host::PluginRuntimeBuilder;
-use dioxus_extism_protocol::{ClientCapabilities, PROTOCOL_VERSION, SessionCtx, SessionId};
+use dioxus_extism_protocol::{ClientCapabilities, SessionCtx, SessionId, PROTOCOL_VERSION};
 
 fn test_session() -> SessionCtx {
     SessionCtx {

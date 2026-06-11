@@ -17,12 +17,8 @@ impl DioxusPlugin for FixtureHookAfterCancel {
                 priority_hint: PriorityHint::Last,
             }],
             host_capabilities: vec![
-                HostCapability::GlobalStateRead {
-                    keys: vec!["after_cancel_count".into()],
-                },
-                HostCapability::GlobalStateWrite {
-                    keys: vec!["after_cancel_count".into()],
-                },
+                HostCapability::GlobalStateRead { keys: vec!["after_cancel_count".into()] },
+                HostCapability::GlobalStateWrite { keys: vec!["after_cancel_count".into()] },
             ],
             ..Default::default()
         }
@@ -34,16 +30,15 @@ impl HookHandler for FixtureHookAfterCancel {
 
     fn handle(call: HookCall, _ctx: &PluginCtx) -> Result<HookResult, PdkError> {
         unsafe {
-            let raw =
-                host_fns::dx_global_state_get("after_cancel_count").unwrap_or_else(|_| "0".into());
+            let raw = host_fns::dx_global_state_get("after_cancel_count")
+                .unwrap_or_else(|_| "0".into());
             let count: u64 = serde_json::from_str::<u64>(&raw).unwrap_or(0);
-            let encoded = serde_json::to_string(&(count + 1)).map_err(PdkError::Json)?;
+            let encoded =
+                serde_json::to_string(&(count + 1)).map_err(PdkError::Json)?;
             host_fns::dx_global_state_set("after_cancel_count", encoded)
                 .map_err(|e| PdkError::HostFn(e.to_string()))?;
         }
-        Ok(HookResult::Continue {
-            context: call.context,
-        })
+        Ok(HookResult::Continue { context: call.context })
     }
 }
 

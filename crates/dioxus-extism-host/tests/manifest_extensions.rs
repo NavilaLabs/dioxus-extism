@@ -12,9 +12,7 @@ use dioxus_extism_host::{
     ManifestExtensionError, ManifestExtensionHandler, OnUnknownExtension, PluginRuntimeBuilder,
     PluginRuntimeError, PluginSource,
 };
-use dioxus_extism_protocol::{
-    ClientCapabilities, PROTOCOL_VERSION, PluginId, SessionCtx, SessionId,
-};
+use dioxus_extism_protocol::{ClientCapabilities, PluginId, SessionCtx, SessionId, PROTOCOL_VERSION};
 
 macro_rules! fixture {
     ($name:ident, $path:literal) => {
@@ -31,7 +29,6 @@ fn default_session() -> SessionCtx {
     SessionCtx {
         session_id: SessionId("ext-test".into()),
         user_id: None,
-        email: None,
         client: ClientCapabilities {
             protocol_version: PROTOCOL_VERSION,
             app_version: 0,
@@ -57,12 +54,7 @@ struct RecordingHandler {
 }
 
 impl RecordingHandler {
-    fn new() -> (
-        Self,
-        Arc<Mutex<Vec<(String, serde_json::Value)>>>,
-        Arc<Mutex<Vec<(String, serde_json::Value)>>>,
-        Arc<AtomicUsize>,
-    ) {
+    fn new() -> (Self, Arc<Mutex<Vec<(String, serde_json::Value)>>>, Arc<Mutex<Vec<(String, serde_json::Value)>>>, Arc<AtomicUsize>) {
         let validate_calls = Arc::new(Mutex::new(vec![]));
         let on_load_calls = Arc::new(Mutex::new(vec![]));
         let on_unload_count = Arc::new(AtomicUsize::new(0));
@@ -96,10 +88,7 @@ impl ManifestExtensionHandler for RecordingHandler {
         value: &serde_json::Value,
     ) -> Result<(), ManifestExtensionError> {
         // Record namespace from the value (we don't have it here; push as-is)
-        self.validate_calls
-            .lock()
-            .unwrap()
-            .push(("recorded".into(), value.clone()));
+        self.validate_calls.lock().unwrap().push(("recorded".into(), value.clone()));
         self.validate_result.as_ref().map(|_| ()).map_err(|msg| {
             ManifestExtensionError::ValidationFailed {
                 namespace: "test.my-feature".into(),
@@ -113,17 +102,13 @@ impl ManifestExtensionHandler for RecordingHandler {
         _plugin_id: &PluginId,
         value: &serde_json::Value,
     ) -> Result<(), ManifestExtensionError> {
-        self.on_load_calls
-            .lock()
-            .unwrap()
-            .push(("recorded".into(), value.clone()));
-        self.on_load_result
-            .as_ref()
-            .map(|_| ())
-            .map_err(|msg| ManifestExtensionError::LoadFailed {
+        self.on_load_calls.lock().unwrap().push(("recorded".into(), value.clone()));
+        self.on_load_result.as_ref().map(|_| ()).map_err(|msg| {
+            ManifestExtensionError::LoadFailed {
                 namespace: "test.my-feature".into(),
                 message: msg.clone(),
-            })
+            }
+        })
     }
 
     fn on_unload(&self, _plugin_id: &PluginId) -> Result<(), ManifestExtensionError> {
@@ -181,8 +166,7 @@ async fn validate_failure_aborts_build() {
 
     assert!(
         matches!(result, Err(PluginRuntimeError::ManifestExtension { .. })),
-        "expected ManifestExtension error, got: {:?}",
-        result.as_ref().err()
+        "expected ManifestExtension error, got: {:?}", result.as_ref().err()
     );
 }
 
@@ -199,8 +183,7 @@ async fn on_load_failure_aborts_build() {
 
     assert!(
         matches!(result, Err(PluginRuntimeError::ManifestExtension { .. })),
-        "expected ManifestExtension error on on_load failure, got: {:?}",
-        result.as_ref().err()
+        "expected ManifestExtension error on on_load failure, got: {:?}", result.as_ref().err()
     );
 }
 
@@ -217,16 +200,9 @@ async fn on_unload_called_at_unload_time() {
         .expect("build failed");
 
     let plugin_id = PluginId("test/with-extension".into());
-    runtime
-        .unload_plugin(&plugin_id)
-        .await
-        .expect("unload failed");
+    runtime.unload_plugin(&plugin_id).await.expect("unload failed");
 
-    assert_eq!(
-        on_unload_count.load(Ordering::Relaxed),
-        1,
-        "on_unload should be called once"
-    );
+    assert_eq!(on_unload_count.load(Ordering::Relaxed), 1, "on_unload should be called once");
 }
 
 #[tokio::test]
@@ -238,16 +214,10 @@ async fn unknown_ns_warn_loads_plugin() {
         .build()
         .await;
 
-    assert!(
-        result.is_ok(),
-        "Warn policy should allow unknown namespaces"
-    );
+    assert!(result.is_ok(), "Warn policy should allow unknown namespaces");
     let runtime = result.unwrap();
     let session = default_session();
-    let contents = runtime
-        .render_slot("ext-slot", &session)
-        .await
-        .expect("render");
+    let contents = runtime.render_slot("ext-slot", &session).await.expect("render");
     assert!(!contents.is_empty(), "plugin should render");
 }
 
@@ -261,12 +231,8 @@ async fn unknown_ns_error_rejects_plugin() {
         .await;
 
     assert!(
-        matches!(
-            result,
-            Err(PluginRuntimeError::UnknownManifestExtension { .. })
-        ),
-        "Error policy should reject unknown namespace, got: {:?}",
-        result.as_ref().err()
+        matches!(result, Err(PluginRuntimeError::UnknownManifestExtension { .. })),
+        "Error policy should reject unknown namespace, got: {:?}", result.as_ref().err()
     );
 }
 
@@ -279,10 +245,7 @@ async fn unknown_ns_ignore_loads_plugin() {
         .build()
         .await;
 
-    assert!(
-        result.is_ok(),
-        "Ignore policy should silently allow unknown namespaces"
-    );
+    assert!(result.is_ok(), "Ignore policy should silently allow unknown namespaces");
 }
 
 #[tokio::test]
@@ -296,9 +259,7 @@ async fn register_at_runtime_then_install() {
     runtime
         .register_manifest_extension("test.my-feature", Arc::new(handler))
         .await;
-    runtime
-        .register_capability_check("test.cap-a", |_, _| Ok(()))
-        .await;
+    runtime.register_capability_check("test.cap-a", |_, _| Ok(())).await;
 
     let id = runtime
         .install(
@@ -320,43 +281,24 @@ async fn second_namespace_handler_receives_correct_value() {
 
     struct AnotherHandler(Arc<Mutex<Vec<serde_json::Value>>>);
     impl ManifestExtensionHandler for AnotherHandler {
-        fn validate(
-            &self,
-            _: &PluginId,
-            value: &serde_json::Value,
-        ) -> Result<(), ManifestExtensionError> {
+        fn validate(&self, _: &PluginId, value: &serde_json::Value) -> Result<(), ManifestExtensionError> {
             self.0.lock().unwrap().push(value.clone());
             Ok(())
         }
-        fn on_load(
-            &self,
-            _: &PluginId,
-            _: &serde_json::Value,
-        ) -> Result<(), ManifestExtensionError> {
-            Ok(())
-        }
-        fn on_unload(&self, _: &PluginId) -> Result<(), ManifestExtensionError> {
-            Ok(())
-        }
+        fn on_load(&self, _: &PluginId, _: &serde_json::Value) -> Result<(), ManifestExtensionError> { Ok(()) }
+        fn on_unload(&self, _: &PluginId) -> Result<(), ManifestExtensionError> { Ok(()) }
     }
 
     let _runtime = PluginRuntimeBuilder::<()>::new()
         .add_plugin(src(WITH_EXTENSION_WASM))
         .with_capability_check("test.cap-a", |_, _| Ok(()))
         .with_manifest_extension("test.my-feature", Arc::new(RecordingHandler::new().0))
-        .with_manifest_extension(
-            "test.another-ns",
-            Arc::new(AnotherHandler(another_ns_calls_clone)),
-        )
+        .with_manifest_extension("test.another-ns", Arc::new(AnotherHandler(another_ns_calls_clone)))
         .build()
         .await
         .expect("build failed");
 
     let calls = another_ns_calls.lock().unwrap();
     assert_eq!(calls.len(), 1, "validate called for test.another-ns");
-    assert_eq!(
-        calls[0],
-        serde_json::json!("hello"),
-        "value matches manifest declaration"
-    );
+    assert_eq!(calls[0], serde_json::json!("hello"), "value matches manifest declaration");
 }

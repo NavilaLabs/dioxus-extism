@@ -89,33 +89,20 @@ api_route_fn!(api_comments_get, |req: ApiRequest| {
 
 // POST /api/comments — body `{ "slug": "...", "text": "..." }`.
 api_route_fn!(api_comments_post, |req: ApiRequest| {
-    let body = req
-        .body
-        .as_ref()
-        .ok_or_else(|| PdkError::HostFn("missing body".into()))?;
+    let body = req.body.as_ref().ok_or_else(|| PdkError::HostFn("missing body".into()))?;
     let slug = body["slug"].as_str().unwrap_or("").to_owned();
     let text = body["text"].as_str().unwrap_or("").to_owned();
 
     if slug.is_empty() || text.is_empty() {
-        return Ok(ApiResponse {
-            status: 400,
-            body: Some(serde_json::json!({"error": "slug and text required"})),
-            ..Default::default()
-        });
+        return Ok(ApiResponse { status: 400, body: Some(serde_json::json!({"error": "slug and text required"})), ..Default::default() });
     }
 
     // Verify post exists via host invocation.
-    let post_raw =
-        unsafe { host_fns::dx_invoke("get_post", serde_json::json!({"slug": slug}).to_string()) }
-            .map_err(|e| PdkError::HostFn(e.to_string()))?;
-    let post: Option<serde_json::Value> =
-        serde_json::from_str(&post_raw).map_err(PdkError::Json)?;
+    let post_raw = unsafe { host_fns::dx_invoke("get_post", serde_json::json!({"slug": slug}).to_string()) }
+        .map_err(|e| PdkError::HostFn(e.to_string()))?;
+    let post: Option<serde_json::Value> = serde_json::from_str(&post_raw).map_err(PdkError::Json)?;
     if post.is_none() {
-        return Ok(ApiResponse {
-            status: 404,
-            body: Some(serde_json::json!({"error": "post not found"})),
-            ..Default::default()
-        });
+        return Ok(ApiResponse { status: 404, body: Some(serde_json::json!({"error": "post not found"})), ..Default::default() });
     }
 
     let updated = append_comment(&slug, &text).map_err(|e| PdkError::HostFn(e.to_string()))?;
@@ -138,12 +125,7 @@ pub fn render_recent_comments(Json(_input): Json<PageRouteInput>) -> FnResult<Js
             .build(),
     ];
     if all.is_empty() {
-        rows.push(
-            div()
-                .class("comments-empty")
-                .child(text("No comments yet."))
-                .build(),
-        );
+        rows.push(div().class("comments-empty").child(text("No comments yet.")).build());
     } else {
         for (slug, comments) in &all {
             if comments.is_empty() {
@@ -153,12 +135,16 @@ pub fn render_recent_comments(Json(_input): Json<PageRouteInput>) -> FnResult<Js
                 div()
                     .class("comments-post-group")
                     .child(element("h2").child(text(format!("Post: {slug}"))).build())
-                    .children(comments.iter().map(|c| {
-                        div()
-                            .class("comment-item")
-                            .child(text(format!("• {}", c.text)))
-                            .build()
-                    }))
+                    .children(
+                        comments
+                            .iter()
+                            .map(|c| {
+                                div()
+                                    .class("comment-item")
+                                    .child(text(format!("• {}", c.text)))
+                                    .build()
+                            }),
+                    )
                     .build(),
             );
         }
@@ -174,35 +160,24 @@ pub fn on_interaction(
     let update = match handler_id.0.as_str() {
         "update_draft" => {
             let text = event_data["value"].as_str().unwrap_or("").to_owned();
-            write_session("draft", &text).map_err(|e| extism_pdk::Error::msg(e.to_string()))?;
-            ViewUpdate {
-                view: None,
-                events: vec![],
-            }
+            write_session("draft", &text)
+                .map_err(|e| extism_pdk::Error::msg(e.to_string()))?;
+            ViewUpdate { view: None, events: vec![] }
         }
         "submit_comment" => {
             let draft = read_session_str("draft")?;
             let slug = read_session_str("current_slug")?;
             if draft.is_empty() || slug.is_empty() {
-                return Ok(Json(ViewUpdate {
-                    view: None,
-                    events: vec![],
-                }));
+                return Ok(Json(ViewUpdate { view: None, events: vec![] }));
             }
             let comments = append_comment(&slug, &draft)?;
             write_session("draft", &String::new())
                 .map_err(|e| extism_pdk::Error::msg(e.to_string()))?;
             emit_comment_posted(&slug, &draft)?;
             let new_view = build_comments_view(&slug, &comments, "");
-            ViewUpdate {
-                view: Some(new_view),
-                events: vec![],
-            }
+            ViewUpdate { view: Some(new_view), events: vec![] }
         }
-        _ => ViewUpdate {
-            view: None,
-            events: vec![],
-        },
+        _ => ViewUpdate { view: None, events: vec![] },
     };
     Ok(Json(update))
 }
@@ -223,12 +198,16 @@ fn build_comments_view(slug: &str, comments: &[Comment], draft: &str) -> PluginV
     } else {
         div()
             .class("comments-list")
-            .children(comments.iter().map(|c| {
-                div()
-                    .class("comment-item")
-                    .child(text(format!("• {}", c.text)))
-                    .build()
-            }))
+            .children(
+                comments
+                    .iter()
+                    .map(|c| {
+                        div()
+                            .class("comment-item")
+                            .child(text(format!("• {}", c.text)))
+                            .build()
+                    }),
+            )
             .build()
     };
 
@@ -306,10 +285,7 @@ fn append_comment(slug: &str, text: &str) -> Result<Vec<Comment>, extism_pdk::Er
     let mut all: HashMap<String, Vec<Comment>> = read_global(COMMENTS_KEY)?;
     let list = all.entry(slug.to_owned()).or_default();
     let next_id = list.iter().map(|c| c.id).max().unwrap_or(0) + 1;
-    list.push(Comment {
-        id: next_id,
-        text: text.to_owned(),
-    });
+    list.push(Comment { id: next_id, text: text.to_owned() });
     let updated = list.clone();
     write_global(COMMENTS_KEY, &all)?;
     Ok(updated)

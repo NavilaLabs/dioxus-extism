@@ -22,9 +22,7 @@ impl DioxusPlugin for FixtureWrapNoContent {
 impl TransformProvider for FixtureWrapNoContent {
     fn transform(_input: TransformInput, _ctx: &PluginCtx) -> Result<TransformOutput, PdkError> {
         // Intentionally omits original_content() to trigger the host warning.
-        Ok(TransformOutput {
-            view: PluginView::Text("no-content".into()),
-        })
+        Ok(TransformOutput { view: PluginView::Text("no-content".into()) })
     }
 }
 

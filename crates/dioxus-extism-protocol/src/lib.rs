@@ -9,7 +9,6 @@
 //! versions without a major semver bump.
 
 use std::collections::{BTreeMap, HashMap, HashSet};
-use std::sync::Arc;
 
 use serde::{Deserialize, Serialize};
 
@@ -217,28 +216,17 @@ pub struct HookRegistration {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[non_exhaustive]
 pub enum HostCapability {
-    Http {
-        allowed_hosts: Vec<String>,
-    },
-    GlobalStateRead {
-        keys: Vec<String>,
-    },
-    GlobalStateWrite {
-        keys: Vec<String>,
-    },
+    Http { allowed_hosts: Vec<String> },
+    GlobalStateRead { keys: Vec<String> },
+    GlobalStateWrite { keys: Vec<String> },
     /// Read another plugin's per-session state entries.
     ///
     /// Deprecated in favour of cross-plugin function calls — use `CallPlugin` instead.
     /// Retained for backward compatibility; existing plugins continue to work.
     #[deprecated(note = "use CallPlugin (requires_plugins) instead")]
-    ReadPluginState {
-        plugin_id: PluginId,
-        keys: Vec<String>,
-    },
+    ReadPluginState { plugin_id: PluginId, keys: Vec<String> },
     /// Request permission to call named host-side invocations.
-    Invoke {
-        names: Vec<String>,
-    },
+    Invoke { names: Vec<String> },
     /// A host-defined capability class. The `namespace` identifies the type of
     /// capability; `value` is opaque JSON interpreted entirely by the host's
     /// registered [`CapabilityCheckFn`].
@@ -595,8 +583,6 @@ impl<'a, HostCtx: std::fmt::Debug> std::fmt::Debug for CallContext<'a, HostCtx> 
 pub struct SessionCtx {
     pub session_id: SessionId,
     pub user_id: Option<String>,
-    /// Display email of the authenticated user, if available.
-    pub email: Option<String>,
     /// Capabilities of the client that initiated this request.
     pub client: ClientCapabilities,
     /// The plugin making this call, set by the host runtime.
@@ -608,42 +594,9 @@ impl Default for SessionCtx {
         Self {
             session_id: SessionId(String::new()),
             user_id: None,
-            email: None,
             client: ClientCapabilities::default(),
             caller: None,
         }
-    }
-}
-
-/// Implemented by host-context types that can contribute user-identity fields
-/// to a [`SessionCtx`] when the `PluginSlot` component builds the server call.
-///
-/// Hosts install `Arc<HostCtx>` in the Dioxus context tree.  `PluginSlot<HostCtx>`
-/// reads the context and calls these methods to enrich the `SessionCtx` that is
-/// forwarded to the plugin's `slot_render` export.
-///
-/// A blanket impl for `()` returns `None` for all fields so existing code that
-/// uses `PluginSlot<()>` continues to compile without changes.
-pub trait SessionContextProvider {
-    /// The authenticated user's identifier, or `None` if unauthenticated.
-    fn session_user_id(&self) -> Option<&str> {
-        None
-    }
-    /// The authenticated user's email, or `None` if unavailable.
-    fn session_email(&self) -> Option<&str> {
-        None
-    }
-}
-
-impl SessionContextProvider for () {}
-
-impl<T: SessionContextProvider + ?Sized> SessionContextProvider for Arc<T> {
-    fn session_user_id(&self) -> Option<&str> {
-        (**self).session_user_id()
-    }
-
-    fn session_email(&self) -> Option<&str> {
-        (**self).session_email()
     }
 }
 
@@ -818,43 +771,23 @@ pub struct ApiRouteDeclaration {
 impl ApiRouteDeclaration {
     /// Declare a `GET` route handled by `handler_fn`.
     pub fn get(path: impl Into<String>, handler_fn: impl Into<String>) -> Self {
-        Self {
-            method: HttpMethod::Get,
-            path: path.into(),
-            handler_fn: handler_fn.into(),
-        }
+        Self { method: HttpMethod::Get, path: path.into(), handler_fn: handler_fn.into() }
     }
     /// Declare a `POST` route handled by `handler_fn`.
     pub fn post(path: impl Into<String>, handler_fn: impl Into<String>) -> Self {
-        Self {
-            method: HttpMethod::Post,
-            path: path.into(),
-            handler_fn: handler_fn.into(),
-        }
+        Self { method: HttpMethod::Post, path: path.into(), handler_fn: handler_fn.into() }
     }
     /// Declare a `PUT` route handled by `handler_fn`.
     pub fn put(path: impl Into<String>, handler_fn: impl Into<String>) -> Self {
-        Self {
-            method: HttpMethod::Put,
-            path: path.into(),
-            handler_fn: handler_fn.into(),
-        }
+        Self { method: HttpMethod::Put, path: path.into(), handler_fn: handler_fn.into() }
     }
     /// Declare a `PATCH` route handled by `handler_fn`.
     pub fn patch(path: impl Into<String>, handler_fn: impl Into<String>) -> Self {
-        Self {
-            method: HttpMethod::Patch,
-            path: path.into(),
-            handler_fn: handler_fn.into(),
-        }
+        Self { method: HttpMethod::Patch, path: path.into(), handler_fn: handler_fn.into() }
     }
     /// Declare a `DELETE` route handled by `handler_fn`.
     pub fn delete(path: impl Into<String>, handler_fn: impl Into<String>) -> Self {
-        Self {
-            method: HttpMethod::Delete,
-            path: path.into(),
-            handler_fn: handler_fn.into(),
-        }
+        Self { method: HttpMethod::Delete, path: path.into(), handler_fn: handler_fn.into() }
     }
 }
 
@@ -884,11 +817,7 @@ pub struct ApiResponse {
 
 impl Default for ApiResponse {
     fn default() -> Self {
-        Self {
-            status: 200,
-            headers: HashMap::new(),
-            body: None,
-        }
+        Self { status: 200, headers: HashMap::new(), body: None }
     }
 }
 
@@ -1055,12 +984,10 @@ pub enum CallErrorKind {
 impl From<&CallError> for CallErrorKind {
     fn from(e: &CallError) -> Self {
         match e {
-            CallError::PermissionDenied
-            | CallError::FunctionNotPublic
-            | CallError::HostPolicyVeto => Self::PermissionDenied,
-            CallError::TargetUnavailable | CallError::TargetVersionMismatch => {
-                Self::TargetUnavailable
+            CallError::PermissionDenied | CallError::FunctionNotPublic | CallError::HostPolicyVeto => {
+                Self::PermissionDenied
             }
+            CallError::TargetUnavailable | CallError::TargetVersionMismatch => Self::TargetUnavailable,
             CallError::StackOverflow => Self::StackOverflow,
             CallError::DeserializationError => Self::DeserializationError,
         }

@@ -7,12 +7,11 @@ use crate::manifest_extension::ManifestExtensionError;
 #[non_exhaustive]
 pub enum InstallError {
     #[error("required dependency '{dependency:?}' of plugin '{plugin:?}' is not installed")]
-    DependencyMissing {
-        plugin: PluginId,
-        dependency: PluginId,
-    },
+    DependencyMissing { plugin: PluginId, dependency: PluginId },
 
-    #[error("plugin '{plugin:?}' requires '{dependency:?}' at '{required}' but found '{found}'")]
+    #[error(
+        "plugin '{plugin:?}' requires '{dependency:?}' at '{required}' but found '{found}'"
+    )]
     DependencyVersionConflict {
         plugin: PluginId,
         dependency: PluginId,
@@ -20,14 +19,8 @@ pub enum InstallError {
         found: String,
     },
 
-    #[error(
-        "plugin '{plugin:?}' requires function '{function}' from '{dependency:?}' but it is not declared public"
-    )]
-    FunctionNotPublic {
-        plugin: PluginId,
-        dependency: PluginId,
-        function: String,
-    },
+    #[error("plugin '{plugin:?}' requires function '{function}' from '{dependency:?}' but it is not declared public")]
+    FunctionNotPublic { plugin: PluginId, dependency: PluginId, function: String },
 
     #[error("cyclic dependency detected among plugins: {cycle:?}")]
     CyclicDependency { cycle: Vec<PluginId> },
@@ -79,10 +72,7 @@ pub enum PluginRuntimeError {
     PluginDisabled(PluginId),
 
     #[error("capability denied for plugin {plugin:?}: {capability}")]
-    CapabilityDenied {
-        plugin: PluginId,
-        capability: String,
-    },
+    CapabilityDenied { plugin: PluginId, capability: String },
 
     #[error("persistence error: {0}")]
     Persistence(#[from] PersistenceError),
@@ -96,11 +86,7 @@ pub enum PluginRuntimeError {
     },
 
     #[error("page route conflict: {path} — claimed by {first:?} and {second:?}")]
-    PageRouteConflict {
-        path: String,
-        first: PluginId,
-        second: PluginId,
-    },
+    PageRouteConflict { path: String, first: PluginId, second: PluginId },
 
     #[error("manifest extension error for plugin {plugin:?}: {source}")]
     ManifestExtension {

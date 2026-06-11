@@ -17,7 +17,10 @@ impl DioxusPlugin for PluginB {
             transforms: vec![TransformDeclaration {
                 selector: Selector::Within {
                     outer: Box::new(Selector::Slot("activity-feed".into())),
-                    inner: NodeSelector::DataAttr("data-plugin-slot".into(), "feed-actions".into()),
+                    inner: NodeSelector::DataAttr(
+                        "data-plugin-slot".into(),
+                        "feed-actions".into(),
+                    ),
                 },
                 transform_fn: "inject_share_button".into(),
                 op: TransformOp::InsertAfter,

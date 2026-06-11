@@ -55,9 +55,7 @@ impl MobileSessionProvider {
 
     /// Create a new provider with the given service name.
     pub fn new(service: impl Into<String>) -> Self {
-        Self {
-            service: service.into(),
-        }
+        Self { service: service.into() }
     }
 
     /// Retrieve the existing session ID from the keychain, or create and store a new one.

@@ -12,12 +12,8 @@
 /// Requires compiled fixtures:
 ///   cargo build --target wasm32-unknown-unknown --release \
 ///     -p fixture-route-replace -p fixture-with-extension
-use dioxus_extism_host::{
-    OnUnknownExtension, PluginRuntimeBuilder, PluginRuntimeError, PluginSource,
-};
-use dioxus_extism_protocol::{
-    ClientCapabilities, PROTOCOL_VERSION, PluginId, SessionCtx, SessionId,
-};
+use dioxus_extism_host::{OnUnknownExtension, PluginRuntimeBuilder, PluginRuntimeError, PluginSource};
+use dioxus_extism_protocol::{ClientCapabilities, PluginId, SessionCtx, SessionId, PROTOCOL_VERSION};
 
 macro_rules! fixture {
     ($name:ident, $path:literal) => {
@@ -77,32 +73,24 @@ async fn policy_ctx_result_varies_with_host_ctx() {
 
     let session = default_session();
 
-    let low_ctx = HostCtx {
-        user_tier: 1,
-        region: "us-east".into(),
-    };
+    let low_ctx = HostCtx { user_tier: 1, region: "us-east".into() };
     let blocked = runtime
         .render_route_transforms("/replace/42", &session, &low_ctx)
         .await
         .expect("render failed");
     assert!(
         blocked.replacement.is_none(),
-        "policy should block replacement for user_tier < 2, got: {:?}",
-        blocked.replacement
+        "policy should block replacement for user_tier < 2, got: {:?}", blocked.replacement
     );
 
-    let high_ctx = HostCtx {
-        user_tier: 3,
-        region: "us-east".into(),
-    };
+    let high_ctx = HostCtx { user_tier: 3, region: "us-east".into() };
     let allowed = runtime
         .render_route_transforms("/replace/42", &session, &high_ctx)
         .await
         .expect("render failed");
     assert!(
         allowed.replacement.is_some(),
-        "policy should allow replacement for user_tier >= 2, got: {:?}",
-        allowed.replacement
+        "policy should allow replacement for user_tier >= 2, got: {:?}", allowed.replacement
     );
 }
 
@@ -123,48 +111,36 @@ async fn policy_ctx_reads_both_fields() {
     let session = default_session();
 
     // Neither condition → blocked.
-    let neither = HostCtx {
-        user_tier: 1,
-        region: "us-east".into(),
-    };
+    let neither = HostCtx { user_tier: 1, region: "us-east".into() };
     let blocked = runtime
         .render_route_transforms("/replace/42", &session, &neither)
         .await
         .expect("render failed");
     assert!(
         blocked.replacement.is_none(),
-        "low tier + non-vip should be blocked, got: {:?}",
-        blocked.replacement
+        "low tier + non-vip should be blocked, got: {:?}", blocked.replacement
     );
 
     // Only region condition → allowed.
-    let vip = HostCtx {
-        user_tier: 1,
-        region: "vip".into(),
-    };
+    let vip = HostCtx { user_tier: 1, region: "vip".into() };
     let by_region = runtime
         .render_route_transforms("/replace/42", &session, &vip)
         .await
         .expect("render failed");
     assert!(
         by_region.replacement.is_some(),
-        "vip region should override low tier, got: {:?}",
-        by_region.replacement
+        "vip region should override low tier, got: {:?}", by_region.replacement
     );
 
     // Only tier condition → allowed.
-    let tier = HostCtx {
-        user_tier: 5,
-        region: "us-east".into(),
-    };
+    let tier = HostCtx { user_tier: 5, region: "us-east".into() };
     let by_tier = runtime
         .render_route_transforms("/replace/42", &session, &tier)
         .await
         .expect("render failed");
     assert!(
         by_tier.replacement.is_some(),
-        "high tier should override non-vip, got: {:?}",
-        by_tier.replacement
+        "high tier should override non-vip, got: {:?}", by_tier.replacement
     );
 }
 
@@ -180,17 +156,20 @@ async fn policy_ctx_reads_both_fields() {
 async fn capability_check_ctx_result_varies_with_host_ctx() {
     let runtime = PluginRuntimeBuilder::<HostCtx>::new()
         .add_plugin(src(WITH_EXTENSION_WASM))
-        .with_capability_check_ctx("test.cap-a", |_, value, ctx| {
-            let required = value["tier"].as_u64().unwrap_or(0) as u32;
-            if ctx.host.user_tier >= required {
-                Ok(())
-            } else {
-                Err(format!(
-                    "user_tier {} < required {}",
-                    ctx.host.user_tier, required
-                ))
-            }
-        })
+        .with_capability_check_ctx(
+            "test.cap-a",
+            |_, value, ctx| {
+                let required = value["tier"].as_u64().unwrap_or(0) as u32;
+                if ctx.host.user_tier >= required {
+                    Ok(())
+                } else {
+                    Err(format!(
+                        "user_tier {} < required {}",
+                        ctx.host.user_tier, required
+                    ))
+                }
+            },
+        )
         .with_on_unknown_extension(OnUnknownExtension::Ignore)
         .build()
         .await
@@ -200,10 +179,7 @@ async fn capability_check_ctx_result_varies_with_host_ctx() {
     let session = default_session();
 
     // user_tier 0 < manifest required (1) → denied.
-    let low_ctx = HostCtx {
-        user_tier: 0,
-        region: "us-east".into(),
-    };
+    let low_ctx = HostCtx { user_tier: 0, region: "us-east".into() };
     let denied = runtime
         .check_custom_capability(&plugin_id, "test.cap-a", &session, &low_ctx)
         .await;
@@ -213,10 +189,7 @@ async fn capability_check_ctx_result_varies_with_host_ctx() {
     );
 
     // user_tier 2 >= manifest required (1) → allowed.
-    let high_ctx = HostCtx {
-        user_tier: 2,
-        region: "us-east".into(),
-    };
+    let high_ctx = HostCtx { user_tier: 2, region: "us-east".into() };
     let allowed = runtime
         .check_custom_capability(&plugin_id, "test.cap-a", &session, &high_ctx)
         .await;
@@ -259,10 +232,7 @@ async fn capability_check_ctx_reads_both_fields() {
             &plugin_id,
             "test.cap-a",
             &session,
-            &HostCtx {
-                user_tier: 0,
-                region: "us-east".into(),
-            },
+            &HostCtx { user_tier: 0, region: "us-east".into() },
         )
         .await;
     assert!(
@@ -276,10 +246,7 @@ async fn capability_check_ctx_reads_both_fields() {
             &plugin_id,
             "test.cap-a",
             &session,
-            &HostCtx {
-                user_tier: 0,
-                region: "admin".into(),
-            },
+            &HostCtx { user_tier: 0, region: "admin".into() },
         )
         .await;
     assert!(
@@ -293,10 +260,7 @@ async fn capability_check_ctx_reads_both_fields() {
             &plugin_id,
             "test.cap-a",
             &session,
-            &HostCtx {
-                user_tier: 5,
-                region: "us-east".into(),
-            },
+            &HostCtx { user_tier: 5, region: "us-east".into() },
         )
         .await;
     assert!(

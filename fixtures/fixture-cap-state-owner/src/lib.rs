@@ -15,9 +15,9 @@ impl DioxusPlugin for FixtureCapStateOwner {
                 name: "other-slot".into(),
                 priority_hint: PriorityHint::Normal,
             }],
-            host_capabilities: vec![HostCapability::GlobalStateWrite {
-                keys: vec!["data".into()],
-            }],
+            host_capabilities: vec![
+                HostCapability::GlobalStateWrite { keys: vec!["data".into()] },
+            ],
             ..Default::default()
         }
     }

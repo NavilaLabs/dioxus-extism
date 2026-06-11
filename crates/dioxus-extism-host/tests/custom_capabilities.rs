@@ -9,9 +9,7 @@ use dioxus_extism_host::{
     ManifestExtensionError, ManifestExtensionHandler, PluginInstallConfig, PluginRuntimeBuilder,
     PluginRuntimeError, PluginSource,
 };
-use dioxus_extism_protocol::{
-    ClientCapabilities, PROTOCOL_VERSION, PluginId, SessionCtx, SessionId,
-};
+use dioxus_extism_protocol::{ClientCapabilities, PluginId, SessionCtx, SessionId, PROTOCOL_VERSION};
 
 macro_rules! fixture {
     ($name:ident, $path:literal) => {
@@ -53,13 +51,8 @@ async fn capability_allowed_when_check_returns_ok() {
 
     let id = PluginId("test/with-extension".into());
     let session = test_session();
-    let result = runtime
-        .check_custom_capability(&id, "test.cap-a", &session, &())
-        .await;
-    assert!(
-        result.is_ok(),
-        "check should pass when declared and check returns Ok"
-    );
+    let result = runtime.check_custom_capability(&id, "test.cap-a", &session, &()).await;
+    assert!(result.is_ok(), "check should pass when declared and check returns Ok");
 }
 
 #[tokio::test]
@@ -73,8 +66,7 @@ async fn capability_denied_at_build_when_check_returns_err() {
 
     assert!(
         matches!(result, Err(PluginRuntimeError::CapabilityDenied { .. })),
-        "expected CapabilityDenied at build time, got: {:?}",
-        result.as_ref().err()
+        "expected CapabilityDenied at build time, got: {:?}", result.as_ref().err()
     );
 }
 
@@ -90,8 +82,7 @@ async fn capability_denied_when_no_check_registered() {
 
     assert!(
         matches!(result, Err(PluginRuntimeError::CapabilityDenied { .. })),
-        "expected CapabilityDenied with no check registered, got: {:?}",
-        result.as_ref().err()
+        "expected CapabilityDenied with no check registered, got: {:?}", result.as_ref().err()
     );
 }
 
@@ -102,10 +93,13 @@ async fn check_function_receives_correct_value() {
 
     let runtime = PluginRuntimeBuilder::<()>::new()
         .add_plugin(src(WITH_EXTENSION_WASM))
-        .with_capability_check("test.cap-a", move |_, value: &serde_json::Value| {
-            *captured_clone.lock().unwrap() = Some(value.clone());
-            Ok(())
-        })
+        .with_capability_check(
+            "test.cap-a",
+            move |_, value: &serde_json::Value| {
+                *captured_clone.lock().unwrap() = Some(value.clone());
+                Ok(())
+            },
+        )
         .with_on_unknown_extension(dioxus_extism_host::OnUnknownExtension::Ignore)
         .build()
         .await
@@ -129,12 +123,7 @@ async fn check_custom_capability_plugin_not_found() {
 
     let session = test_session();
     let result = runtime
-        .check_custom_capability(
-            &PluginId("ghost/plugin".into()),
-            "test.cap-a",
-            &session,
-            &(),
-        )
+        .check_custom_capability(&PluginId("ghost/plugin".into()), "test.cap-a", &session, &())
         .await;
 
     assert!(
@@ -154,35 +143,27 @@ async fn register_check_at_runtime_then_install() {
     let called_clone = Arc::clone(&called);
 
     runtime
-        .register_capability_check("test.cap-a", move |_, _| {
-            *called_clone.lock().unwrap() = true;
-            Ok(())
-        })
+        .register_capability_check(
+            "test.cap-a",
+            move |_, _| {
+                *called_clone.lock().unwrap() = true;
+                Ok(())
+            },
+        )
         .await;
 
     struct NopExtHandler;
     impl ManifestExtensionHandler for NopExtHandler {
-        fn validate(
-            &self,
-            _: &PluginId,
-            _: &serde_json::Value,
-        ) -> Result<(), ManifestExtensionError> {
-            Ok(())
-        }
-        fn on_load(
-            &self,
-            _: &PluginId,
-            _: &serde_json::Value,
-        ) -> Result<(), ManifestExtensionError> {
-            Ok(())
-        }
-        fn on_unload(&self, _: &PluginId) -> Result<(), ManifestExtensionError> {
-            Ok(())
-        }
+        fn validate(&self, _: &PluginId, _: &serde_json::Value) -> Result<(), ManifestExtensionError> { Ok(()) }
+        fn on_load(&self, _: &PluginId, _: &serde_json::Value) -> Result<(), ManifestExtensionError> { Ok(()) }
+        fn on_unload(&self, _: &PluginId) -> Result<(), ManifestExtensionError> { Ok(()) }
     }
 
     runtime
-        .register_manifest_extension("test.my-feature", Arc::new(NopExtHandler))
+        .register_manifest_extension(
+            "test.my-feature",
+            Arc::new(NopExtHandler),
+        )
         .await;
 
     let _ = runtime
@@ -190,8 +171,5 @@ async fn register_check_at_runtime_then_install() {
         .await
         .expect("install failed");
 
-    assert!(
-        *called.lock().unwrap(),
-        "check should be called during install"
-    );
+    assert!(*called.lock().unwrap(), "check should be called during install");
 }

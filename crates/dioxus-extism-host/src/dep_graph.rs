@@ -72,13 +72,12 @@ impl DepGraph {
             if !dep.required {
                 continue;
             }
-            let target_info =
-                self.nodes
-                    .get(&dep.id)
-                    .ok_or_else(|| InstallError::DependencyMissing {
-                        plugin: plugin_id.clone(),
-                        dependency: dep.id.clone(),
-                    })?;
+            let target_info = self.nodes.get(&dep.id).ok_or_else(|| {
+                InstallError::DependencyMissing {
+                    plugin: plugin_id.clone(),
+                    dependency: dep.id.clone(),
+                }
+            })?;
             check_version_match(plugin_id, &dep.id, &dep.version.0, &target_info.version)?;
         }
         Ok(())
@@ -87,7 +86,10 @@ impl DepGraph {
     /// Returns which optional dependencies of `plugin_id` are satisfiable.
     ///
     /// Returns a list of `(dependency_index, satisfiable)` pairs — one per optional dep.
-    pub fn optional_satisfiability(&self, deps: &[PluginDependency]) -> Vec<(usize, bool)> {
+    pub fn optional_satisfiability(
+        &self,
+        deps: &[PluginDependency],
+    ) -> Vec<(usize, bool)> {
         deps.iter()
             .enumerate()
             .filter(|(_, d)| !d.required)
@@ -118,11 +120,8 @@ impl DepGraph {
             }
         }
 
-        let mut queue: VecDeque<&PluginId> = in_degree
-            .iter()
-            .filter(|(_, d)| **d == 0)
-            .map(|(k, _)| *k)
-            .collect();
+        let mut queue: VecDeque<&PluginId> =
+            in_degree.iter().filter(|(_, d)| **d == 0).map(|(k, _)| *k).collect();
         let mut visited = 0usize;
 
         while let Some(node) = queue.pop_front() {
@@ -155,7 +154,11 @@ impl DepGraph {
     pub fn required_dependents_of(&self, id: &PluginId) -> HashSet<PluginId> {
         self.nodes
             .iter()
-            .filter(|(_, info)| info.requires.iter().any(|d| d.required && &d.id == id))
+            .filter(|(_, info)| {
+                info.requires
+                    .iter()
+                    .any(|d| d.required && &d.id == id)
+            })
             .map(|(dep_id, _)| dep_id.clone())
             .collect()
     }
@@ -164,7 +167,11 @@ impl DepGraph {
     pub fn optional_dependents_of(&self, id: &PluginId) -> HashSet<PluginId> {
         self.nodes
             .iter()
-            .filter(|(_, info)| info.requires.iter().any(|d| !d.required && &d.id == id))
+            .filter(|(_, info)| {
+                info.requires
+                    .iter()
+                    .any(|d| !d.required && &d.id == id)
+            })
             .map(|(dep_id, _)| dep_id.clone())
             .collect()
     }
@@ -179,20 +186,18 @@ pub fn check_version_match(
     constraint: &str,
     target_version: &str,
 ) -> Result<(), InstallError> {
-    let req =
-        VersionReq::parse(constraint).map_err(|_| InstallError::DependencyVersionConflict {
-            plugin: plugin.clone(),
-            dependency: dep_id.clone(),
-            required: constraint.to_owned(),
-            found: target_version.to_owned(),
-        })?;
-    let ver =
-        Version::parse(target_version).map_err(|_| InstallError::DependencyVersionConflict {
-            plugin: plugin.clone(),
-            dependency: dep_id.clone(),
-            required: constraint.to_owned(),
-            found: target_version.to_owned(),
-        })?;
+    let req = VersionReq::parse(constraint).map_err(|_| InstallError::DependencyVersionConflict {
+        plugin: plugin.clone(),
+        dependency: dep_id.clone(),
+        required: constraint.to_owned(),
+        found: target_version.to_owned(),
+    })?;
+    let ver = Version::parse(target_version).map_err(|_| InstallError::DependencyVersionConflict {
+        plugin: plugin.clone(),
+        dependency: dep_id.clone(),
+        required: constraint.to_owned(),
+        found: target_version.to_owned(),
+    })?;
     if req.matches(&ver) {
         Ok(())
     } else {
@@ -215,10 +220,7 @@ mod tests {
     }
 
     fn info(version: &str, deps: Vec<PluginDependency>) -> PluginDepInfo {
-        PluginDepInfo {
-            version: version.into(),
-            requires: deps,
-        }
+        PluginDepInfo { version: version.into(), requires: deps }
     }
 
     fn req_dep(id: &str, version: &str) -> PluginDependency {
@@ -247,10 +249,7 @@ mod tests {
         let mut g = DepGraph::new();
         g.insert(pid("a"), info("1.0.0", vec![req_dep("b", "^1.0")]));
         g.insert(pid("b"), info("1.0.0", vec![req_dep("a", "^1.0")]));
-        assert!(matches!(
-            g.check_acyclic(),
-            Err(InstallError::CyclicDependency { .. })
-        ));
+        assert!(matches!(g.check_acyclic(), Err(InstallError::CyclicDependency { .. })));
     }
 
     #[test]

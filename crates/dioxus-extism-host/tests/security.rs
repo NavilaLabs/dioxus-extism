@@ -15,7 +15,7 @@ use std::time::Duration;
 
 use dioxus_extism_host::{PluginRuntimeBuilder, PluginRuntimeError, PluginSource};
 use dioxus_extism_protocol::{
-    ClientCapabilities, PROTOCOL_VERSION, PluginId, PluginView, SessionCtx, SessionId,
+    ClientCapabilities, PluginId, PluginView, SessionCtx, SessionId, PROTOCOL_VERSION,
 };
 
 // ── WASM bytes ─────────────────────────────────────────────────────────────────
@@ -29,25 +29,16 @@ macro_rules! fixture {
     };
 }
 
-fixture!(CAP_INVOKE_DENIED_WASM, "fixture_cap_invoke_denied.wasm");
-fixture!(
-    CAP_GLOBAL_WRITE_DENIED_WASM,
-    "fixture_cap_global_write_denied.wasm"
-);
-fixture!(
-    CAP_PLUGIN_STATE_READ_WASM,
-    "fixture_cap_plugin_state_read.wasm"
-);
-fixture!(CAP_STATE_OWNER_WASM, "fixture_cap_state_owner.wasm");
-fixture!(CAP_INVOKE_A_WASM, "fixture_cap_invoke_a.wasm");
-fixture!(CAP_INVOKE_B_WASM, "fixture_cap_invoke_b.wasm");
-fixture!(
-    HIGH_PROTOCOL_VERSION_WASM,
-    "fixture_high_protocol_version.wasm"
-);
-fixture!(HIGH_APP_VERSION_WASM, "fixture_high_app_version.wasm");
-fixture!(FAILING_ON_LOAD_WASM, "fixture_failing_on_load.wasm");
-fixture!(SLOT_NORMAL_WASM, "fixture_slot_normal.wasm");
+fixture!(CAP_INVOKE_DENIED_WASM,      "fixture_cap_invoke_denied.wasm");
+fixture!(CAP_GLOBAL_WRITE_DENIED_WASM,"fixture_cap_global_write_denied.wasm");
+fixture!(CAP_PLUGIN_STATE_READ_WASM,  "fixture_cap_plugin_state_read.wasm");
+fixture!(CAP_STATE_OWNER_WASM,        "fixture_cap_state_owner.wasm");
+fixture!(CAP_INVOKE_A_WASM,           "fixture_cap_invoke_a.wasm");
+fixture!(CAP_INVOKE_B_WASM,           "fixture_cap_invoke_b.wasm");
+fixture!(HIGH_PROTOCOL_VERSION_WASM,  "fixture_high_protocol_version.wasm");
+fixture!(HIGH_APP_VERSION_WASM,       "fixture_high_app_version.wasm");
+fixture!(FAILING_ON_LOAD_WASM,        "fixture_failing_on_load.wasm");
+fixture!(SLOT_NORMAL_WASM,            "fixture_slot_normal.wasm");
 
 // ── Helpers ────────────────────────────────────────────────────────────────────
 
@@ -289,7 +280,10 @@ async fn app_version_guard_fires_before_pool_call() {
     );
 
     let call_count = runtime
-        .global_state_json(&PluginId("test/high-app-version".into()), "call_count")
+        .global_state_json(
+            &PluginId("test/high-app-version".into()),
+            "call_count",
+        )
         .await
         .and_then(|v| v.as_u64())
         .unwrap_or(0);
@@ -323,9 +317,9 @@ async fn wall_clock_timeout_render_slot_returns_incompatible() {
 #[tokio::test]
 async fn capability_isolation_between_pool_instances() {
     let get_notes_granted = Arc::new(AtomicU32::new(0));
-    let add_note_granted = Arc::new(AtomicU32::new(0));
-    let add_note_denied = Arc::new(AtomicU32::new(0));
-    let get_notes_denied = Arc::new(AtomicU32::new(0));
+    let add_note_granted  = Arc::new(AtomicU32::new(0));
+    let add_note_denied   = Arc::new(AtomicU32::new(0));
+    let get_notes_denied  = Arc::new(AtomicU32::new(0));
 
     let gng = get_notes_granted.clone();
     let ang = add_note_granted.clone();
@@ -415,9 +409,12 @@ async fn deadlock_liveness_under_20_concurrent_renders() {
         })
         .collect();
 
-    let results = tokio::time::timeout(Duration::from_secs(30), futures::future::join_all(handles))
-        .await
-        .expect("deadlock detected: 20 concurrent render_slot calls did not complete in 30 s");
+    let results = tokio::time::timeout(
+        Duration::from_secs(30),
+        futures::future::join_all(handles),
+    )
+    .await
+    .expect("deadlock detected: 20 concurrent render_slot calls did not complete in 30 s");
 
     for (i, result) in results.into_iter().enumerate() {
         let slot_result = result.expect(&format!("task {i} panicked"));
@@ -442,10 +439,7 @@ async fn on_load_failure_leaves_no_corrupted_global_state() {
         .add_plugin(PluginSource::Bytes(FAILING_ON_LOAD_WASM.into()))
         .build()
         .await;
-    assert!(
-        bad.is_err(),
-        "first build must fail when on_load returns an error"
-    );
+    assert!(bad.is_err(), "first build must fail when on_load returns an error");
 
     // Second build with a healthy plugin must succeed.
     let good = PluginRuntimeBuilder::<()>::new()

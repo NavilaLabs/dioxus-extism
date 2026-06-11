@@ -5,11 +5,12 @@
 use std::sync::Arc;
 
 use dioxus_extism_host::{
-    HookOutcome, PluginRuntime, PluginRuntimeBuilder, PluginRuntimeError, PluginSource,
+    HookOutcome, PluginRuntime, PluginRuntimeBuilder, PluginRuntimeError,
+    PluginSource,
 };
 use dioxus_extism_protocol::{
-    ClientCapabilities, HandlerId, PROTOCOL_VERSION, PluginEvent, PluginId, PluginView, SessionCtx,
-    SessionId, SlotContent, ViewUpdate,
+    ClientCapabilities, HandlerId, PluginEvent, PluginId, PluginView, SessionCtx, SessionId,
+    SlotContent, ViewUpdate, PROTOCOL_VERSION,
 };
 
 pub use dioxus_extism_host::{PluginInstallConfig, PluginRuntimeExt};
@@ -41,7 +42,7 @@ impl Default for MockSession {
 
 impl MockSession {
     /// Create a session with default test values.
-    #[must_use]
+    #[must_use] 
     pub fn new() -> Self {
         Self::default()
     }
@@ -82,7 +83,7 @@ impl MockSession {
     }
 
     /// Convert to `SessionCtx` for use in runtime calls.
-    #[must_use]
+    #[must_use] 
     pub fn as_ctx(&self) -> SessionCtx {
         SessionCtx {
             session_id: self.session_id.clone(),
@@ -197,8 +198,7 @@ impl TestRuntime {
         T: serde::Serialize + serde::de::DeserializeOwned + Send + 'static,
     {
         let ctx = session.as_ctx();
-        self.rt
-            .block_on(self.runtime.run_hook(hook_name, context, &ctx))
+        self.rt.block_on(self.runtime.run_hook(hook_name, context, &ctx))
     }
 
     /// Dispatch an interaction event and return the updated view.
@@ -214,10 +214,8 @@ impl TestRuntime {
         session: &MockSession,
     ) -> Result<ViewUpdate, PluginRuntimeError> {
         let ctx = session.as_ctx();
-        self.rt.block_on(
-            self.runtime
-                .handle_interaction(plugin_id, handler_id, event_data, &ctx),
-        )
+        self.rt
+            .block_on(self.runtime.handle_interaction(plugin_id, handler_id, event_data, &ctx))
     }
 
     /// Emit an event to all registered subscribers.
@@ -412,11 +410,9 @@ macro_rules! assert_view {
 macro_rules! assert_slot {
     ($contents:expr, count($n:expr)) => {
         assert_eq!(
-            $contents.len(),
-            $n,
+            $contents.len(), $n,
             "expected {n} slot contributions, got {got}",
-            n = $n,
-            got = $contents.len()
+            n = $n, got = $contents.len()
         );
     };
 
@@ -442,10 +438,7 @@ macro_rules! assert_slot {
             "expected a contribution from plugin {id:?}, but none found. \
              Present: {present:?}",
             id = $plugin_id,
-            present = $contents
-                .iter()
-                .map(|c| c.plugin_id.0.as_str())
-                .collect::<Vec<_>>()
+            present = $contents.iter().map(|c| c.plugin_id.0.as_str()).collect::<Vec<_>>()
         );
     }};
 }
