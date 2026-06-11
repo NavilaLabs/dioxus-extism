@@ -43,13 +43,13 @@ pub struct DesktopSessionProvider;
 /// - **Windows**: Credential Manager
 ///
 /// Only available on non-WASM targets.
-#[cfg(not(target_arch = "wasm32"))]
+#[cfg(all(not(target_arch = "wasm32"), feature = "server"))]
 #[derive(Clone, PartialEq, Eq)]
 pub struct MobileSessionProvider {
     service: String,
 }
 
-#[cfg(not(target_arch = "wasm32"))]
+#[cfg(all(not(target_arch = "wasm32"), feature = "server"))]
 impl MobileSessionProvider {
     const KEYRING_USER: &'static str = "dioxus-extism-session";
 
