@@ -1,7 +1,7 @@
 #![allow(clippy::unnecessary_wraps)]
 
-use dioxus_extism_pdk::prelude::*;
 use dioxus_extism_pdk::plugin;
+use dioxus_extism_pdk::prelude::*;
 use extism_pdk::{FnResult, Json, plugin_fn};
 
 struct FixtureWithinSelector;
@@ -15,9 +15,9 @@ impl DioxusPlugin for FixtureWithinSelector {
                 TransformDeclaration {
                     selector: Selector::Within {
                         outer: Box::new(Selector::Slot("test-slot".into())),
-                        inner: NodeSelector::Recursive(Box::new(
-                            NodeSelector::HasClass("target".into()),
-                        )),
+                        inner: NodeSelector::Recursive(Box::new(NodeSelector::HasClass(
+                            "target".into(),
+                        ))),
                     },
                     transform_fn: "transform_recursive".into(),
                     op: TransformOp::Replace,
@@ -66,20 +66,28 @@ plugin! { type: FixtureWithinSelector }
 
 #[plugin_fn]
 pub fn transform_recursive(_input: Json<TransformInput>) -> FnResult<Json<TransformOutput>> {
-    Ok(Json(TransformOutput { view: PluginView::Text("TRANSFORMED-RECURSIVE".into()) }))
+    Ok(Json(TransformOutput {
+        view: PluginView::Text("TRANSFORMED-RECURSIVE".into()),
+    }))
 }
 
 #[plugin_fn]
 pub fn transform_shallow(_input: Json<TransformInput>) -> FnResult<Json<TransformOutput>> {
-    Ok(Json(TransformOutput { view: PluginView::Text("TRANSFORMED-SHALLOW".into()) }))
+    Ok(Json(TransformOutput {
+        view: PluginView::Text("TRANSFORMED-SHALLOW".into()),
+    }))
 }
 
 #[plugin_fn]
 pub fn transform_and(_input: Json<TransformInput>) -> FnResult<Json<TransformOutput>> {
-    Ok(Json(TransformOutput { view: PluginView::Text("TRANSFORMED-AND".into()) }))
+    Ok(Json(TransformOutput {
+        view: PluginView::Text("TRANSFORMED-AND".into()),
+    }))
 }
 
 #[plugin_fn]
 pub fn transform_or(_input: Json<TransformInput>) -> FnResult<Json<TransformOutput>> {
-    Ok(Json(TransformOutput { view: PluginView::Text("TRANSFORMED-OR".into()) }))
+    Ok(Json(TransformOutput {
+        view: PluginView::Text("TRANSFORMED-OR".into()),
+    }))
 }

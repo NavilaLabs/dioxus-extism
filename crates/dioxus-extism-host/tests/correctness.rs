@@ -13,8 +13,8 @@ use std::sync::Arc;
 
 use dioxus_extism_host::{HookOutcome, PluginInstallConfig, PluginRuntimeBuilder, PluginSource};
 use dioxus_extism_protocol::{
-    ClientCapabilities, PluginId, PluginView, Selector, SessionCtx, SessionId,
-    TransformContext, ViewElement, PROTOCOL_VERSION,
+    ClientCapabilities, PROTOCOL_VERSION, PluginId, PluginView, Selector, SessionCtx, SessionId,
+    TransformContext, ViewElement,
 };
 
 // ── WASM bytes ─────────────────────────────────────────────────────────────────
@@ -32,7 +32,10 @@ fixture!(SLOT_NORMAL_WASM, "fixture_slot_normal.wasm");
 fixture!(SLOT_HIGH_WASM, "fixture_slot_high.wasm");
 fixture!(SLOT_FAILING_WASM, "fixture_slot_failing.wasm");
 fixture!(HIGH_APP_VERSION_WASM, "fixture_high_app_version.wasm");
-fixture!(HIGH_PROTOCOL_VERSION_WASM, "fixture_high_protocol_version.wasm");
+fixture!(
+    HIGH_PROTOCOL_VERSION_WASM,
+    "fixture_high_protocol_version.wasm"
+);
 fixture!(HOOK_CONTINUE_WASM, "fixture_hook_continue.wasm");
 fixture!(HOOK_REPLACE_WASM, "fixture_hook_replace.wasm");
 fixture!(HOOK_CANCEL_WASM, "fixture_hook_cancel.wasm");
@@ -90,7 +93,10 @@ fn make_nested_tree(class: &str, depth: usize) -> PluginView {
     if depth == 0 {
         PluginView::Element(ViewElement {
             tag: "span".into(),
-            attrs: vec![("class".into(), dioxus_extism_protocol::AttrValue::String(class.into()))],
+            attrs: vec![(
+                "class".into(),
+                dioxus_extism_protocol::AttrValue::String(class.into()),
+            )],
             ..Default::default()
         })
     } else {
@@ -169,14 +175,21 @@ async fn render_slot_disabled_plugin_contributes_incompatible_not_gap() {
         .expect("build failed");
 
     let id = PluginId("test/slot-normal".into());
-    runtime.disable_plugin(&id).await.expect("disable_plugin failed");
+    runtime
+        .disable_plugin(&id)
+        .await
+        .expect("disable_plugin failed");
 
     let contents = runtime
         .render_slot("test-slot", &default_session())
         .await
         .expect("render_slot failed");
 
-    assert_eq!(contents.len(), 1, "disabled plugin still contributes (as Incompatible)");
+    assert_eq!(
+        contents.len(),
+        1,
+        "disabled plugin still contributes (as Incompatible)"
+    );
     assert!(
         matches!(contents[0].view, PluginView::Incompatible { .. }),
         "disabled plugin produces Incompatible"
@@ -274,7 +287,11 @@ async fn run_hook_plugin_err_in_middle_does_not_abort_chain() {
         .expect("build failed");
 
     let outcome = runtime
-        .run_hook("test-hook", serde_json::json!("initial"), &default_session())
+        .run_hook(
+            "test-hook",
+            serde_json::json!("initial"),
+            &default_session(),
+        )
         .await
         .expect("run_hook failed");
 
@@ -302,16 +319,21 @@ async fn render_route_transforms_wrap_fold_sequential_pipeline() {
 
     let wrap = result.wrap.expect("wrap must be present");
 
-    assert!(view_contains_text(&wrap, "marker-a"), "marker-a must be in wrap output");
-    assert!(view_contains_text(&wrap, "marker-b"), "marker-b must be in wrap output");
+    assert!(
+        view_contains_text(&wrap, "marker-a"),
+        "marker-a must be in wrap output"
+    );
+    assert!(
+        view_contains_text(&wrap, "marker-b"),
+        "marker-b must be in wrap output"
+    );
 
     let received_a = runtime
         .global_state_json(&PluginId("test/wrap-a".into()), "received_original")
         .await
         .expect("wrap-a must have stored received_original");
     assert_eq!(
-        received_a["HostComponent"]["name"],
-        "__content__",
+        received_a["HostComponent"]["name"], "__content__",
         "wrap-a must receive __content__ seed as original"
     );
 }
@@ -333,8 +355,14 @@ async fn render_route_transforms_wrap_plugin_fail_passes_through_unchanged() {
 
     let wrap = result.wrap.expect("wrap must survive failing plugin");
 
-    assert!(view_contains_text(&wrap, "marker-a"), "marker-a must survive failing wrap");
-    assert!(view_contains_text(&wrap, "marker-b"), "marker-b must survive failing wrap");
+    assert!(
+        view_contains_text(&wrap, "marker-a"),
+        "marker-a must survive failing wrap"
+    );
+    assert!(
+        view_contains_text(&wrap, "marker-b"),
+        "marker-b must survive failing wrap"
+    );
     assert!(
         !view_contains_text(&wrap, "marker-failing"),
         "failing plugin must not contribute"
@@ -354,7 +382,10 @@ async fn render_route_transforms_unmatched_path_returns_empty() {
         .await
         .expect("render_route_transforms failed");
 
-    assert!(result.is_empty(), "unmatched path must return empty RouteTransforms");
+    assert!(
+        result.is_empty(),
+        "unmatched path must return empty RouteTransforms"
+    );
 }
 
 // ── apply_tree_transforms tests ───────────────────────────────────────────────
@@ -432,7 +463,10 @@ async fn apply_tree_transforms_shallow_does_not_descend_past_direct_children() {
         .await
         .expect("apply_tree_transforms failed");
 
-    assert_eq!(result, expected, "shallow selector must leave depth-2 node unchanged");
+    assert_eq!(
+        result, expected,
+        "shallow selector must leave depth-2 node unchanged"
+    );
 }
 
 #[tokio::test]
@@ -480,9 +514,7 @@ async fn apply_tree_transforms_and_requires_both_conditions() {
     fn count_text_nodes(view: &PluginView, needle: &str) -> usize {
         match view {
             PluginView::Text(t) if t.contains(needle) => 1,
-            PluginView::Element(e) => {
-                e.children.iter().map(|c| count_text_nodes(c, needle)).sum()
-            }
+            PluginView::Element(e) => e.children.iter().map(|c| count_text_nodes(c, needle)).sum(),
             PluginView::Fragment(children) => {
                 children.iter().map(|c| count_text_nodes(c, needle)).sum()
             }
@@ -543,9 +575,7 @@ async fn apply_tree_transforms_or_matches_either_condition() {
     fn count_text_nodes(view: &PluginView, needle: &str) -> usize {
         match view {
             PluginView::Text(t) if t.contains(needle) => 1,
-            PluginView::Element(e) => {
-                e.children.iter().map(|c| count_text_nodes(c, needle)).sum()
-            }
+            PluginView::Element(e) => e.children.iter().map(|c| count_text_nodes(c, needle)).sum(),
             PluginView::Fragment(children) => {
                 children.iter().map(|c| count_text_nodes(c, needle)).sum()
             }
@@ -580,7 +610,11 @@ async fn reload_plugin_override_map_version_increments_by_exactly_one() {
         .expect("reload_plugin failed");
 
     let after = runtime.override_map().await.version;
-    assert_eq!(after, before + 1, "version must increment by exactly 1 on reload");
+    assert_eq!(
+        after,
+        before + 1,
+        "version must increment by exactly 1 on reload"
+    );
 }
 
 #[tokio::test]
@@ -600,7 +634,11 @@ async fn reload_plugin_on_unload_called_on_old_pool() {
         .unwrap_or(0);
 
     runtime
-        .reload_plugin(&id, PluginSource::Bytes(SLOT_NORMAL_WASM.into()), PluginInstallConfig::default())
+        .reload_plugin(
+            &id,
+            PluginSource::Bytes(SLOT_NORMAL_WASM.into()),
+            PluginInstallConfig::default(),
+        )
         .await
         .expect("reload_plugin failed");
 
@@ -610,7 +648,11 @@ async fn reload_plugin_on_unload_called_on_old_pool() {
         .and_then(|v| v.as_u64())
         .expect("unload_count must be set after reload");
 
-    assert_eq!(after_count, before_count + 1, "on_unload must increment unload_count by 1");
+    assert_eq!(
+        after_count,
+        before_count + 1,
+        "on_unload must increment unload_count by 1"
+    );
 }
 
 #[tokio::test]
@@ -624,12 +666,21 @@ async fn unload_plugin_slot_disappears_from_render_slot() {
     let id = PluginId("test/slot-normal".into());
     let session = default_session();
 
-    let before = runtime.render_slot("test-slot", &session).await.expect("render_slot");
+    let before = runtime
+        .render_slot("test-slot", &session)
+        .await
+        .expect("render_slot");
     assert_eq!(before.len(), 1, "plugin must be present before unload");
 
-    runtime.unload_plugin(&id).await.expect("unload_plugin failed");
+    runtime
+        .unload_plugin(&id)
+        .await
+        .expect("unload_plugin failed");
 
-    let after = runtime.render_slot("test-slot", &session).await.expect("render_slot after unload");
+    let after = runtime
+        .render_slot("test-slot", &session)
+        .await
+        .expect("render_slot after unload");
     assert!(after.is_empty(), "slot must be empty after unload");
 }
 
@@ -662,14 +713,20 @@ async fn enable_disable_toggle_concurrent_render_no_panic() {
         })
         .collect();
 
-    runtime.disable_plugin(&id).await.expect("disable_plugin failed");
+    runtime
+        .disable_plugin(&id)
+        .await
+        .expect("disable_plugin failed");
 
     let results = futures::future::join_all(handles).await;
     for r in results {
         let contents = r.expect("task panicked").expect("render_slot failed");
         for c in &contents {
             assert!(
-                matches!(c.view, PluginView::Text(_) | PluginView::Element(_) | PluginView::Incompatible { .. }),
+                matches!(
+                    c.view,
+                    PluginView::Text(_) | PluginView::Element(_) | PluginView::Incompatible { .. }
+                ),
                 "unexpected view variant: {:?}",
                 c.view
             );
@@ -686,7 +743,10 @@ async fn on_load_failure_build_returns_err_plugin_not_inserted() {
         .build()
         .await;
 
-    assert!(result.is_err(), "build() must fail when on_load returns an error");
+    assert!(
+        result.is_err(),
+        "build() must fail when on_load returns an error"
+    );
 }
 
 // ── ClientCapabilities app version check ─────────────────────────────────────
@@ -717,8 +777,7 @@ async fn client_capabilities_high_app_version_yields_incompatible() {
         .and_then(|v| v.as_u64())
         .unwrap_or(0);
     assert_eq!(
-        call_count,
-        0,
+        call_count, 0,
         "slot WASM export must not be called when app version guard fires"
     );
 }
@@ -727,7 +786,10 @@ async fn client_capabilities_high_app_version_yields_incompatible() {
 
 #[tokio::test]
 async fn plugin_install_config_tie_at_equal_priority_preserves_insertion_order() {
-    let cfg = PluginInstallConfig { base_priority: Some(500), ..Default::default() };
+    let cfg = PluginInstallConfig {
+        base_priority: Some(500),
+        ..Default::default()
+    };
     let runtime = PluginRuntimeBuilder::<()>::new()
         .add_plugin_with_config(PluginSource::Bytes(SLOT_NORMAL_WASM.into()), cfg.clone())
         .add_plugin_with_config(PluginSource::Bytes(SLOT_HIGH_WASM.into()), cfg)

@@ -23,10 +23,7 @@ impl TransformProvider for FixtureWrapB {
     fn transform(input: TransformInput, _ctx: &PluginCtx) -> Result<TransformOutput, PdkError> {
         let inner = input.original.unwrap_or_else(original_content);
         Ok(TransformOutput {
-            view: div()
-                .child(inner)
-                .child(text("marker-b"))
-                .build(),
+            view: div().child(inner).child(text("marker-b")).build(),
         })
     }
 }

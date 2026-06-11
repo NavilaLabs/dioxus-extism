@@ -6,9 +6,7 @@ use dioxus_extism_protocol::{
 
 /// Fetch the current `OverrideMap` at boot time.
 #[server]
-pub async fn get_override_map(
-    caps: ClientCapabilities,
-) -> Result<OverrideMap, ServerFnError> {
+pub async fn get_override_map(caps: ClientCapabilities) -> Result<OverrideMap, ServerFnError> {
     use std::sync::Arc;
 
     use dioxus_extism_host::PluginRuntime;
@@ -17,18 +15,26 @@ pub async fn get_override_map(
     let Some(runtime) = dioxus::fullstack::FullstackContext::current()
         .and_then(|ctx| ctx.extension::<Arc<PluginRuntime>>())
     else {
-        tracing::warn!("get_override_map: PluginRuntime not found in request extensions — add .layer(axum::Extension(runtime)) to your router");
+        tracing::warn!(
+            "get_override_map: PluginRuntime not found in request extensions — add .layer(axum::Extension(runtime)) to your router"
+        );
         return Ok(OverrideMap::default());
     };
     Ok(runtime.override_map().await)
 }
 
 /// Fetch slot contributions for a named slot.
+///
+/// `user_id` and `email` are provided by the host's `SessionContextProvider`
+/// implementation (via `PluginSlot<HostCtx>`) so that plugins can personalise
+/// their output.  Both default to `None` when the host context is unavailable.
 #[server]
 pub async fn get_slot_content(
     slot: String,
     session_id: SessionId,
     caps: ClientCapabilities,
+    user_id: Option<String>,
+    email: Option<String>,
 ) -> Result<Vec<SlotContent>, ServerFnError> {
     use std::sync::Arc;
 
@@ -38,10 +44,18 @@ pub async fn get_slot_content(
     let Some(runtime) = dioxus::fullstack::FullstackContext::current()
         .and_then(|ctx| ctx.extension::<Arc<PluginRuntime>>())
     else {
-        tracing::warn!("get_slot_content: PluginRuntime not found in request extensions — add .layer(axum::Extension(runtime)) to your router");
+        tracing::warn!(
+            "get_slot_content: PluginRuntime not found in request extensions — add .layer(axum::Extension(runtime)) to your router"
+        );
         return Ok(vec![]);
     };
-    let session = SessionCtx { session_id, user_id: None, client: caps, caller: None };
+    let session = SessionCtx {
+        session_id,
+        user_id,
+        email,
+        client: caps,
+        caller: None,
+    };
     runtime
         .render_slot(&slot, &session)
         .await
@@ -66,13 +80,21 @@ pub async fn get_route_transforms(
     let Some(runtime) = dioxus::fullstack::FullstackContext::current()
         .and_then(|ctx| ctx.extension::<Arc<PluginRuntime>>())
     else {
-        tracing::warn!("get_route_transforms: PluginRuntime not found in request extensions — add .layer(axum::Extension(runtime)) to your router");
+        tracing::warn!(
+            "get_route_transforms: PluginRuntime not found in request extensions — add .layer(axum::Extension(runtime)) to your router"
+        );
         return Err(ServerFnError::new(
             "PluginRuntime not in request extensions — add .layer(axum::Extension(runtime)) to your router",
         ));
     };
 
-    let session = SessionCtx { session_id, user_id: None, client: caps, caller: None };
+    let session = SessionCtx {
+        session_id,
+        user_id: None,
+        email: None,
+        client: caps,
+        caller: None,
+    };
 
     runtime
         .render_route_transforms(&path, &session, &())
@@ -124,13 +146,21 @@ pub async fn handle_plugin_interaction(
     let Some(runtime) = dioxus::fullstack::FullstackContext::current()
         .and_then(|ctx| ctx.extension::<Arc<PluginRuntime>>())
     else {
-        tracing::warn!("handle_plugin_interaction: PluginRuntime not found in request extensions — add .layer(axum::Extension(runtime)) to your router");
+        tracing::warn!(
+            "handle_plugin_interaction: PluginRuntime not found in request extensions — add .layer(axum::Extension(runtime)) to your router"
+        );
         return Err(ServerFnError::new(
             "PluginRuntime not in request extensions — add .layer(axum::Extension(runtime)) to your router",
         ));
     };
 
-    let session = SessionCtx { session_id, user_id: None, client: caps, caller: None };
+    let session = SessionCtx {
+        session_id,
+        user_id: None,
+        email: None,
+        client: caps,
+        caller: None,
+    };
     let pid = PId(plugin_id);
     let hid = HandlerId(handler_id);
 
@@ -161,7 +191,9 @@ pub async fn get_component_resolution(
     let Some(runtime) = dioxus::fullstack::FullstackContext::current()
         .and_then(|ctx| ctx.extension::<Arc<PluginRuntime>>())
     else {
-        tracing::warn!("get_component_resolution: PluginRuntime not found in request extensions — add .layer(axum::Extension(runtime)) to your router");
+        tracing::warn!(
+            "get_component_resolution: PluginRuntime not found in request extensions — add .layer(axum::Extension(runtime)) to your router"
+        );
         return Err(ServerFnError::new(
             "PluginRuntime not in request extensions — add .layer(axum::Extension(runtime)) to your router",
         ));
@@ -170,6 +202,7 @@ pub async fn get_component_resolution(
     let session = SessionCtx {
         session_id,
         user_id: None,
+        email: None,
         client: caps,
         caller: None,
     };
@@ -198,11 +231,19 @@ pub async fn get_plugin_page(
     let Some(runtime) = dioxus::fullstack::FullstackContext::current()
         .and_then(|ctx| ctx.extension::<Arc<PluginRuntime>>())
     else {
-        tracing::warn!("get_plugin_page: PluginRuntime not found in request extensions — add .layer(axum::Extension(runtime)) to your router");
+        tracing::warn!(
+            "get_plugin_page: PluginRuntime not found in request extensions — add .layer(axum::Extension(runtime)) to your router"
+        );
         return Ok(None);
     };
 
-    let session = SessionCtx { session_id, user_id: None, client: caps, caller: None };
+    let session = SessionCtx {
+        session_id,
+        user_id: None,
+        email: None,
+        client: caps,
+        caller: None,
+    };
     runtime
         .render_page_route(&relative_path, &session)
         .await

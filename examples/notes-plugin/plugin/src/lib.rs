@@ -12,8 +12,8 @@
 #![allow(unsafe_code)]
 
 use dioxus_extism_pdk::host_fns;
-use dioxus_extism_pdk::prelude::*;
 use dioxus_extism_pdk::plugin;
+use dioxus_extism_pdk::prelude::*;
 use extism_pdk::{FnResult, Json, plugin_fn};
 use serde::{Deserialize, Serialize};
 
@@ -77,7 +77,10 @@ pub fn on_interaction(
     let update = match handler_id.0.as_str() {
         "update_draft" => handle_update_draft(&event_data)?,
         "submit_note" => handle_submit_note()?,
-        _ => ViewUpdate { view: None, events: vec![] },
+        _ => ViewUpdate {
+            view: None,
+            events: vec![],
+        },
     };
 
     Ok(Json(update))
@@ -85,9 +88,7 @@ pub fn on_interaction(
 
 /// Render the `/notes` page route: lists all notes across every slug.
 #[plugin_fn]
-pub fn render_notes_page(
-    Json(input): Json<PageRouteInput>,
-) -> FnResult<Json<PluginView>> {
+pub fn render_notes_page(Json(input): Json<PageRouteInput>) -> FnResult<Json<PluginView>> {
     let _ = input; // no path params needed for the listing page
     let all_notes = fetch_notes("").unwrap_or_default();
     let count = all_notes.len();
@@ -114,7 +115,11 @@ pub fn render_notes_page(
     Ok(Json(
         div()
             .class("plugin-notes-page")
-            .child(element("h1").child(text(format!("All Notes ({count})"))).build())
+            .child(
+                element("h1")
+                    .child(text(format!("All Notes ({count})")))
+                    .build(),
+            )
             .child(body)
             .build(),
     ))
@@ -122,9 +127,7 @@ pub fn render_notes_page(
 
 // ── Interaction handlers ──────────────────────────────────────────────────────
 
-fn handle_update_draft(
-    event_data: &serde_json::Value,
-) -> Result<ViewUpdate, extism_pdk::Error> {
+fn handle_update_draft(event_data: &serde_json::Value) -> Result<ViewUpdate, extism_pdk::Error> {
     let text = event_data
         .get("value")
         .and_then(|v| v.as_str())
@@ -133,13 +136,19 @@ fn handle_update_draft(
     let encoded = serde_json::to_string(&serde_json::Value::String(text))
         .map_err(|e| extism_pdk::Error::msg(e.to_string()))?;
     unsafe { host_fns::dx_state_set("draft", encoded) }?;
-    Ok(ViewUpdate { view: None, events: vec![] })
+    Ok(ViewUpdate {
+        view: None,
+        events: vec![],
+    })
 }
 
 fn handle_submit_note() -> Result<ViewUpdate, extism_pdk::Error> {
     let draft = read_draft()?;
     if draft.is_empty() {
-        return Ok(ViewUpdate { view: None, events: vec![] });
+        return Ok(ViewUpdate {
+            view: None,
+            events: vec![],
+        });
     }
 
     let slug = read_current_page()?;
@@ -152,7 +161,10 @@ fn handle_submit_note() -> Result<ViewUpdate, extism_pdk::Error> {
     unsafe { host_fns::dx_state_delete("draft") }?;
 
     let new_view = build_notes_view(&slug, &notes, "");
-    Ok(ViewUpdate { view: Some(new_view), events: vec![] })
+    Ok(ViewUpdate {
+        view: Some(new_view),
+        events: vec![],
+    })
 }
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
@@ -189,7 +201,10 @@ fn build_notes_view(slug: &str, notes: &[Note], draft: &str) -> PluginView {
         })
         .collect();
 
-    let notes_list = div().class("plugin-notes-list").children(notes_items).build();
+    let notes_list = div()
+        .class("plugin-notes-list")
+        .children(notes_items)
+        .build();
 
     let empty_msg = if notes.is_empty() {
         div()
@@ -229,7 +244,12 @@ fn build_notes_view(slug: &str, notes: &[Note], draft: &str) -> PluginView {
 
     div()
         .class("plugin-notes-section")
-        .child(element("h3").class("plugin-notes-title").child(text("Notes")).build())
+        .child(
+            element("h3")
+                .class("plugin-notes-title")
+                .child(text("Notes"))
+                .build(),
+        )
         .child(empty_msg)
         .child(notes_list)
         .child(form)

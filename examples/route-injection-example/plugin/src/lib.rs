@@ -43,7 +43,9 @@ pub fn wrap_product_page(input: Json<TransformInput>) -> FnResult<Json<Transform
         .child(
             div()
                 .class("plugin-product-header")
-                .child(text(format!("✨ Enhanced by plugin — product {product_id}")))
+                .child(text(format!(
+                    "✨ Enhanced by plugin — product {product_id}"
+                )))
                 .build(),
         )
         .child(original_content())

@@ -6,7 +6,7 @@
 use proc_macro::TokenStream;
 use proc_macro2::Span;
 use quote::quote;
-use syn::{parse_macro_input, FnArg, ItemFn, Pat, Type};
+use syn::{FnArg, ItemFn, Pat, Type, parse_macro_input};
 
 /// Wraps a Dioxus component to support plugin transforms via `OverridableComponent`.
 ///
@@ -24,7 +24,11 @@ pub fn overridable(_attr: TokenStream, item: TokenStream) -> TokenStream {
         if let FnArg::Typed(pat_type) = arg
             && let Type::ImplTrait(_) = &*pat_type.ty
         {
-            let param_name = if let Pat::Ident(ident) = &*pat_type.pat { ident.ident.to_string() } else { "unknown".to_string() };
+            let param_name = if let Pat::Ident(ident) = &*pat_type.pat {
+                ident.ident.to_string()
+            } else {
+                "unknown".to_string()
+            };
             let msg = format!(
                 "Parameter `{param_name}: impl Trait` cannot be used with \
                  #[overridable]. Use a concrete type or wrap in a serialisable struct.",

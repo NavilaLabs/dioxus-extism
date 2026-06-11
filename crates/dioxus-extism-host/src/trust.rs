@@ -1,4 +1,4 @@
-use ring::signature::{UnparsedPublicKey, ED25519};
+use ring::signature::{ED25519, UnparsedPublicKey};
 
 /// Result of verifying a plugin's Ed25519 signature at load time.
 ///
@@ -39,7 +39,10 @@ pub(crate) fn compute_trust_tag(
     trust_keys: &[TrustKey],
 ) -> TrustTag {
     let Some(sig) = signature else {
-        return TrustTag { verified: false, signer_key_id: None };
+        return TrustTag {
+            verified: false,
+            signer_key_id: None,
+        };
     };
 
     let candidates: Vec<&TrustKey> = match key_id_hint {
@@ -50,9 +53,15 @@ pub(crate) fn compute_trust_tag(
     for key in candidates {
         let pk = UnparsedPublicKey::new(&ED25519, &key.public_key_bytes);
         if pk.verify(wasm_bytes, sig).is_ok() {
-            return TrustTag { verified: true, signer_key_id: Some(key.key_id.clone()) };
+            return TrustTag {
+                verified: true,
+                signer_key_id: Some(key.key_id.clone()),
+            };
         }
     }
 
-    TrustTag { verified: false, signer_key_id: None }
+    TrustTag {
+        verified: false,
+        signer_key_id: None,
+    }
 }

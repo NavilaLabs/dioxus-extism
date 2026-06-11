@@ -12,9 +12,9 @@ use async_trait::async_trait;
 use dioxus_extism_protocol::{
     CallContext, CallPluginGrant, ClientCapabilities, ComponentResolution, DenialReason,
     GrantStatus, HandlerId, HookCall, HookResult, HostCapability, HostComponentRef, OverrideMap,
-    PluginEvent, PluginId, PluginInitContext, PluginManifest, PluginView, PriorityHint,
-    RoutePattern, RouteTransforms, SessionCtx, SessionId, SlotContent, TransformContext,
-    TransformInput, TransformOp, TransformOutput, ViewUpdate, PROTOCOL_VERSION,
+    PROTOCOL_VERSION, PluginEvent, PluginId, PluginInitContext, PluginManifest, PluginView,
+    PriorityHint, RoutePattern, RouteTransforms, SessionCtx, SessionId, SlotContent,
+    TransformContext, TransformInput, TransformOp, TransformOutput, ViewUpdate,
 };
 use extism::convert::Json;
 use futures::future::BoxFuture;
@@ -60,10 +60,9 @@ pub type RouteReplacePolicyFn<HostCtx = ()> =
 /// The context-aware form is available via
 /// [`PluginRuntimeBuilder::with_capability_check_ctx`] and
 /// [`PluginRuntime::register_capability_check_ctx`].
-pub type CapabilityCheckFn<HostCtx = ()> =
-    dyn Fn(&PluginId, &serde_json::Value, &CallContext<'_, HostCtx>) -> Result<(), String>
-        + Send
-        + Sync;
+pub type CapabilityCheckFn<HostCtx = ()> = dyn Fn(&PluginId, &serde_json::Value, &CallContext<'_, HostCtx>) -> Result<(), String>
+    + Send
+    + Sync;
 
 /// Two-argument capability check used only at plugin load time (build/install/reload).
 ///
@@ -83,13 +82,12 @@ type LoadTimeCapabilityCheckFn =
 /// **all satisfiable optional grants are allowed**.
 ///
 /// `GrantPolicyFn` is **never** consulted for required items.
-pub type GrantPolicyFn<HostCtx = ()> =
-    dyn Fn(
-            &dioxus_extism_protocol::GrantRequest,
-            &CallContext<'_, HostCtx>,
-        ) -> dioxus_extism_protocol::GrantDecision
-        + Send
-        + Sync;
+pub type GrantPolicyFn<HostCtx = ()> = dyn Fn(
+        &dioxus_extism_protocol::GrantRequest,
+        &CallContext<'_, HostCtx>,
+    ) -> dioxus_extism_protocol::GrantDecision
+    + Send
+    + Sync;
 
 // ── Audit sink ────────────────────────────────────────────────────────────────
 
@@ -99,9 +97,13 @@ pub enum CallOutcome {
     /// The call was allowed and completed.
     Allowed { duration: Duration },
     /// The call was denied before reaching the target.
-    Denied { reason: dioxus_extism_protocol::DenialReason },
+    Denied {
+        reason: dioxus_extism_protocol::DenialReason,
+    },
     /// The call reached the target but the target returned an error.
-    Failed { error_kind: dioxus_extism_protocol::CallErrorKind },
+    Failed {
+        error_kind: dioxus_extism_protocol::CallErrorKind,
+    },
 }
 
 /// One audit record emitted for every cross-plugin call (allowed or denied).
@@ -164,10 +166,7 @@ pub enum PluginSource {
     /// Local WASM file.
     File(PathBuf),
     /// Remote WASM binary — SHA-256 checksum is mandatory.
-    Url {
-        url: String,
-        sha256: [u8; 32],
-    },
+    Url { url: String, sha256: [u8; 32] },
     /// In-memory bytes (e.g. `include_bytes!`).
     Bytes(std::borrow::Cow<'static, [u8]>),
 }
@@ -192,7 +191,7 @@ pub struct PluginInstallConfig {
 impl PluginInstallConfig {
     /// Resolve the effective priority for a contribution.
     /// Order: per-name override > `base_priority` > hint.
-    #[must_use] 
+    #[must_use]
     pub fn resolve(&self, name: &str, hint: &PriorityHint) -> i32 {
         self.overrides
             .get(name)
@@ -267,7 +266,11 @@ pub struct TransformRegistry {
     data_slots: HashMap<String, Vec<TransformEntry>>,
     routes: Vec<(RoutePattern, TransformEntry)>,
     /// Within-transforms: `(outer_selector, inner_node_selector, entry)`, sorted priority-desc.
-    within: Vec<(dioxus_extism_protocol::Selector, dioxus_extism_protocol::NodeSelector, TransformEntry)>,
+    within: Vec<(
+        dioxus_extism_protocol::Selector,
+        dioxus_extism_protocol::NodeSelector,
+        TransformEntry,
+    )>,
 }
 
 impl TransformRegistry {
@@ -300,25 +303,25 @@ impl TransformRegistry {
     }
 
     /// Returns component transforms in priority-descending order, or empty if none.
-    #[must_use] 
+    #[must_use]
     pub fn for_component(&self, name: &str) -> Vec<TransformEntry> {
         self.components.get(name).cloned().unwrap_or_default()
     }
 
     /// Returns slot transforms in priority-descending order, or empty if none.
-    #[must_use] 
+    #[must_use]
     pub fn for_slot(&self, name: &str) -> Vec<TransformEntry> {
         self.slots.get(name).cloned().unwrap_or_default()
     }
 
     /// Returns data-plugin-slot transforms in priority-descending order, or empty if none.
-    #[must_use] 
+    #[must_use]
     pub fn for_data_slot(&self, name: &str) -> Vec<TransformEntry> {
         self.data_slots.get(name).cloned().unwrap_or_default()
     }
 
     /// Returns all route transforms whose pattern matches `path`, in priority-descending order.
-    #[must_use] 
+    #[must_use]
     pub fn for_route(&self, path: &str) -> Vec<TransformEntry> {
         self.routes
             .iter()
@@ -586,7 +589,11 @@ impl<HostCtx> PluginRuntime<HostCtx> {
     /// policy (§4) — to enforce their own trust policies. dioxus-extism does not act on
     /// the tag beyond recording it.
     pub async fn plugin_trust_tag(&self, id: &PluginId) -> Option<TrustTag> {
-        self.plugins.read().await.get(id).map(|p| p.trust_tag.clone())
+        self.plugins
+            .read()
+            .await
+            .get(id)
+            .map(|p| p.trust_tag.clone())
     }
 
     /// Fire `on_grants_changed` on all plugins affected by a dependency graph change.
@@ -598,7 +605,8 @@ impl<HostCtx> PluginRuntime<HostCtx> {
         // Collect all dependents (required + optional) of the changed plugin.
         let dependents: Vec<PluginId> = {
             let dg = self.dep_graph.read().await;
-            let mut ids: std::collections::HashSet<PluginId> = dg.required_dependents_of(changed_id);
+            let mut ids: std::collections::HashSet<PluginId> =
+                dg.required_dependents_of(changed_id);
             ids.extend(dg.optional_dependents_of(changed_id));
             ids.into_iter().collect()
         };
@@ -607,7 +615,9 @@ impl<HostCtx> PluginRuntime<HostCtx> {
             // Recompute grants for this dependent.
             let (requires, new_caps) = {
                 let plugins = self.plugins.read().await;
-                let Some(p) = plugins.get(&dep_id) else { continue };
+                let Some(p) = plugins.get(&dep_id) else {
+                    continue;
+                };
                 let requires = p.manifest.requires_plugins.clone();
                 let dg = self.dep_graph.read().await;
                 let caps = derive_granted_capabilities(&dep_id, &requires, &dg);
@@ -702,7 +712,10 @@ impl<HostCtx> PluginRuntime<HostCtx> {
                 for &idx in &decision.denied {
                     if let Some(target_id) = target_ids.get(idx) {
                         new_grants.retain(|cap| {
-                            if let HostCapability::CallPlugin { target_plugin_id, .. } = cap {
+                            if let HostCapability::CallPlugin {
+                                target_plugin_id, ..
+                            } = cap
+                            {
                                 target_plugin_id != target_id
                             } else {
                                 true
@@ -730,12 +743,12 @@ impl<HostCtx> PluginRuntime<HostCtx> {
     pub async fn register_grant_policy(
         &self,
         policy: impl Fn(
-                &dioxus_extism_protocol::GrantRequest,
-                &CallContext<'_, HostCtx>,
-            ) -> dioxus_extism_protocol::GrantDecision
-            + Send
-            + Sync
-            + 'static,
+            &dioxus_extism_protocol::GrantRequest,
+            &CallContext<'_, HostCtx>,
+        ) -> dioxus_extism_protocol::GrantDecision
+        + Send
+        + Sync
+        + 'static,
     ) {
         *self.grant_policy.write().await = Some(Arc::new(policy));
     }
@@ -803,7 +816,10 @@ impl<HostCtx> PluginRuntime<HostCtx> {
         let ns: String = namespace.into();
         let check_arc: Arc<LoadTimeCapabilityCheckFn> = Arc::new(check);
         let check_clone = Arc::clone(&check_arc);
-        self.load_time_capability_checks.write().await.insert(ns.clone(), check_arc);
+        self.load_time_capability_checks
+            .write()
+            .await
+            .insert(ns.clone(), check_arc);
         self.capability_checks
             .write()
             .await
@@ -823,13 +839,15 @@ impl<HostCtx> PluginRuntime<HostCtx> {
     pub async fn register_capability_check_ctx(
         &self,
         namespace: impl Into<String>,
-        check: impl Fn(&PluginId, &serde_json::Value, &CallContext<'_, HostCtx>)
-                -> Result<(), String>
-            + Send
-            + Sync
-            + 'static,
+        check: impl Fn(&PluginId, &serde_json::Value, &CallContext<'_, HostCtx>) -> Result<(), String>
+        + Send
+        + Sync
+        + 'static,
     ) {
-        self.capability_checks.write().await.insert(namespace.into(), Arc::new(check));
+        self.capability_checks
+            .write()
+            .await
+            .insert(namespace.into(), Arc::new(check));
     }
 
     /// Check whether `plugin_id` has declared a `Custom` capability for `namespace`
@@ -858,8 +876,16 @@ impl<HostCtx> PluginRuntime<HostCtx> {
                 .host_capabilities
                 .iter()
                 .find_map(|cap| {
-                    if let HostCapability::Custom { namespace: ns, value } = cap {
-                        if ns == namespace { Some(value.clone()) } else { None }
+                    if let HostCapability::Custom {
+                        namespace: ns,
+                        value,
+                    } = cap
+                    {
+                        if ns == namespace {
+                            Some(value.clone())
+                        } else {
+                            None
+                        }
                     } else {
                         None
                     }
@@ -871,10 +897,12 @@ impl<HostCtx> PluginRuntime<HostCtx> {
         };
 
         let checks = self.capability_checks.read().await;
-        let check = checks.get(namespace).ok_or_else(|| PluginRuntimeError::CapabilityDenied {
-            plugin: plugin_id.clone(),
-            capability: format!("Custom({namespace}): no check registered"),
-        })?;
+        let check = checks
+            .get(namespace)
+            .ok_or_else(|| PluginRuntimeError::CapabilityDenied {
+                plugin: plugin_id.clone(),
+                capability: format!("Custom({namespace}): no check registered"),
+            })?;
         let call_ctx = CallContext::new(session, host_ctx);
         check(plugin_id, &declared_value, &call_ctx).map_err(|reason| {
             PluginRuntimeError::CapabilityDenied {
@@ -905,7 +933,9 @@ impl<HostCtx> PluginRuntime<HostCtx> {
         use dioxus_extism_protocol::{SsrComponentResolution, SsrRouteOutput, SsrRouteTransforms};
 
         // Route transforms.
-        let rt = self.render_route_transforms(path, session, host_ctx).await?;
+        let rt = self
+            .render_route_transforms(path, session, host_ctx)
+            .await?;
         let route_transforms = SsrRouteTransforms {
             before: rt.before,
             wrap: rt.wrap,
@@ -927,7 +957,11 @@ impl<HostCtx> PluginRuntime<HostCtx> {
         // All registered component names.
         let component_names: Vec<String> = {
             let regs = self.registries.read().await;
-            regs.transforms.all_component_names().into_iter().map(str::to_owned).collect()
+            regs.transforms
+                .all_component_names()
+                .into_iter()
+                .map(str::to_owned)
+                .collect()
         };
         let mut components = std::collections::HashMap::new();
         for name in &component_names {
@@ -942,7 +976,11 @@ impl<HostCtx> PluginRuntime<HostCtx> {
             components.insert(name.clone(), resolution);
         }
 
-        Ok(SsrRouteOutput { route_transforms, slots, components })
+        Ok(SsrRouteOutput {
+            route_transforms,
+            slots,
+            components,
+        })
     }
 
     /// Read one key from a plugin's session state.
@@ -1067,7 +1105,9 @@ impl<HostCtx> PluginRuntime<HostCtx> {
                 match plugins.get(&plugin_id) {
                     Some(p) => {
                         if !Self::is_compatible(p, &session.client) {
-                            let reason = if p.manifest.min_protocol_version > session.client.protocol_version {
+                            let reason = if p.manifest.min_protocol_version
+                                > session.client.protocol_version
+                            {
                                 format!(
                                     "plugin requires protocol {}, client has {}",
                                     p.manifest.min_protocol_version,
@@ -1076,18 +1116,25 @@ impl<HostCtx> PluginRuntime<HostCtx> {
                             } else {
                                 format!(
                                     "plugin requires app version {}, client has {}",
-                                    p.manifest.min_app_version,
-                                    session.client.app_version
+                                    p.manifest.min_app_version, session.client.app_version
                                 )
                             };
                             results.push(SlotContent {
                                 plugin_id: plugin_id.clone(),
                                 priority,
-                                view: PluginView::Incompatible { reason, fallback: None },
+                                view: PluginView::Incompatible {
+                                    reason,
+                                    fallback: None,
+                                },
                             });
                             continue;
                         }
-                        (p.pool.clone(), p.active_count.clone(), p.pool_size, p.enabled.load(Ordering::Relaxed))
+                        (
+                            p.pool.clone(),
+                            p.active_count.clone(),
+                            p.pool_size,
+                            p.enabled.load(Ordering::Relaxed),
+                        )
                     }
                     None => continue,
                 }
@@ -1105,19 +1152,23 @@ impl<HostCtx> PluginRuntime<HostCtx> {
                 continue;
             }
 
-            match call_export::<SessionCtx, PluginView>(
+            match call_export::<(String, SessionCtx), PluginView>(
                 pool,
                 plugin_id.clone(),
                 active_count,
                 pool_size,
                 self.metrics.clone(),
                 "slot_render",
-                session.clone(),
+                (slot_name.to_owned(), session.clone()),
                 session.clone(),
             )
             .await
             {
-                Ok(view) => results.push(SlotContent { plugin_id, priority, view }),
+                Ok(view) => results.push(SlotContent {
+                    plugin_id,
+                    priority,
+                    view,
+                }),
                 Err(e) => {
                     tracing::warn!(
                         plugin = %plugin_id.0,
@@ -1151,7 +1202,12 @@ impl<HostCtx> PluginRuntime<HostCtx> {
             };
             for content in &mut results {
                 content.view = self
-                    .apply_within_entries(&within_entries, content.view.clone(), ctx.clone(), session)
+                    .apply_within_entries(
+                        &within_entries,
+                        content.view.clone(),
+                        ctx.clone(),
+                        session,
+                    )
                     .await;
             }
         }
@@ -1187,7 +1243,12 @@ impl<HostCtx> PluginRuntime<HostCtx> {
             let (pool, active_count, pool_size, enabled) = {
                 let plugins = self.plugins.read().await;
                 match plugins.get(&plugin_id) {
-                    Some(p) => (p.pool.clone(), p.active_count.clone(), p.pool_size, p.enabled.load(Ordering::Relaxed)),
+                    Some(p) => (
+                        p.pool.clone(),
+                        p.active_count.clone(),
+                        p.pool_size,
+                        p.enabled.load(Ordering::Relaxed),
+                    ),
                     None => continue,
                 }
             };
@@ -1213,9 +1274,14 @@ impl<HostCtx> PluginRuntime<HostCtx> {
             )
             .await
             {
-                Ok(HookResult::Continue { context: c } | HookResult::Replace { context: c }) => current = c,
+                Ok(HookResult::Continue { context: c } | HookResult::Replace { context: c }) => {
+                    current = c
+                }
                 Ok(HookResult::Cancel { reason }) => {
-                    return Ok(HookOutcome::Cancelled { by: plugin_id, reason });
+                    return Ok(HookOutcome::Cancelled {
+                        by: plugin_id,
+                        reason,
+                    });
                 }
                 Ok(_) => {}
                 Err(e) => {
@@ -1284,14 +1350,22 @@ impl<HostCtx> PluginRuntime<HostCtx> {
     ) -> Result<(), PluginRuntimeError> {
         let subscribers = {
             let bus = self.event_bus.read().await;
-            bus.subscribers.get(&event.name).cloned().unwrap_or_default()
+            bus.subscribers
+                .get(&event.name)
+                .cloned()
+                .unwrap_or_default()
         };
 
         for (_, plugin_id) in subscribers {
             let (pool, active_count, pool_size, enabled) = {
                 let plugins = self.plugins.read().await;
                 match plugins.get(&plugin_id) {
-                    Some(p) => (p.pool.clone(), p.active_count.clone(), p.pool_size, p.enabled.load(Ordering::Relaxed)),
+                    Some(p) => (
+                        p.pool.clone(),
+                        p.active_count.clone(),
+                        p.pool_size,
+                        p.enabled.load(Ordering::Relaxed),
+                    ),
                     None => continue,
                 }
             };
@@ -1365,7 +1439,11 @@ impl<HostCtx> PluginRuntime<HostCtx> {
                 client: session.client.clone(),
                 ..Default::default()
             };
-            let input = TransformInput { original: None, context, session: session.clone() };
+            let input = TransformInput {
+                original: None,
+                context,
+                session: session.clone(),
+            };
 
             match call_export::<TransformInput, TransformOutput>(
                 pool,
@@ -1398,7 +1476,11 @@ impl<HostCtx> PluginRuntime<HostCtx> {
             }
         }
 
-        Ok(Some(ComponentResolution { before, replacement, after }))
+        Ok(Some(ComponentResolution {
+            before,
+            replacement,
+            after,
+        }))
     }
 
     /// Resolve all registered route transforms for `path`, returning partitioned results.
@@ -1439,10 +1521,14 @@ impl<HostCtx> PluginRuntime<HostCtx> {
 
         // Sort RouteReplace candidates: priority desc, then plugin_id asc for ties.
         replace_entries.sort_by(|a, b| {
-            b.priority.cmp(&a.priority).then_with(|| a.plugin_id.0.cmp(&b.plugin_id.0))
+            b.priority
+                .cmp(&a.priority)
+                .then_with(|| a.plugin_id.0.cmp(&b.plugin_id.0))
         });
 
-        let before = self.run_inject_transforms(&inject_before, path, session).await;
+        let before = self
+            .run_inject_transforms(&inject_before, path, session)
+            .await;
 
         let wrap = if wrap_entries.is_empty() {
             None
@@ -1518,7 +1604,9 @@ impl<HostCtx> PluginRuntime<HostCtx> {
             Some(current)
         };
 
-        let after = self.run_inject_transforms(&inject_after, path, session).await;
+        let after = self
+            .run_inject_transforms(&inject_after, path, session)
+            .await;
 
         // Resolve the highest-priority approved RouteReplace entry, if any.
         let replacement = {
@@ -1587,7 +1675,12 @@ impl<HostCtx> PluginRuntime<HostCtx> {
             resolved
         };
 
-        Ok(RouteTransforms { before, wrap, after, replacement })
+        Ok(RouteTransforms {
+            before,
+            wrap,
+            after,
+            replacement,
+        })
     }
 
     async fn run_inject_transforms(
@@ -1671,7 +1764,9 @@ impl<HostCtx> PluginRuntime<HostCtx> {
             let regs = self.registries.read().await;
             regs.transforms.within_for_outer(outer_selector)
         };
-        Ok(self.apply_within_entries(&entries, view, context, session).await)
+        Ok(self
+            .apply_within_entries(&entries, view, context, session)
+            .await)
     }
 
     async fn apply_within_entries(
@@ -1728,7 +1823,11 @@ impl<HostCtx> PluginRuntime<HostCtx> {
     /// # Errors
     /// Returns an error if the source cannot be fetched, the manifest is incompatible,
     /// or pool construction fails.
-    #[allow(clippy::too_many_lines, clippy::significant_drop_tightening, deprecated)]
+    #[allow(
+        clippy::too_many_lines,
+        clippy::significant_drop_tightening,
+        deprecated
+    )]
     pub async fn reload_plugin(
         &self,
         id: &PluginId,
@@ -1750,7 +1849,10 @@ impl<HostCtx> PluginRuntime<HostCtx> {
             let p = plugins
                 .get(id)
                 .ok_or_else(|| PluginRuntimeError::PluginNotFound(id.clone()))?;
-            let ctx = p.ctx_arc.lock().map_err(|_| PluginRuntimeError::Pool("ctx mutex poisoned".into()))?;
+            let ctx = p
+                .ctx_arc
+                .lock()
+                .map_err(|_| PluginRuntimeError::Pool("ctx mutex poisoned".into()))?;
             (
                 ctx.session_states.clone(),
                 ctx.global_states.clone(),
@@ -1817,12 +1919,12 @@ impl<HostCtx> PluginRuntime<HostCtx> {
             let handlers = self.extension_handlers.read().await;
             for (ns, val) in &new_manifest.extensions {
                 match handlers.get(ns) {
-                    Some(handler) => handler
-                        .validate(&new_manifest.id, val)
-                        .map_err(|source| PluginRuntimeError::ManifestExtension {
+                    Some(handler) => handler.validate(&new_manifest.id, val).map_err(|source| {
+                        PluginRuntimeError::ManifestExtension {
                             plugin: new_manifest.id.clone(),
                             source,
-                        })?,
+                        }
+                    })?,
                     None => match &self.on_unknown_extension {
                         OnUnknownExtension::Warn => {
                             tracing::warn!(
@@ -1904,6 +2006,7 @@ impl<HostCtx> PluginRuntime<HostCtx> {
             let init_session = SessionCtx {
                 session_id: SessionId("__init__".into()),
                 user_id: None,
+                email: None,
                 client: ClientCapabilities {
                     protocol_version: PROTOCOL_VERSION,
                     app_version: 0,
@@ -1913,17 +2016,29 @@ impl<HostCtx> PluginRuntime<HostCtx> {
             };
             let provisional_grants = {
                 let dg = self.dep_graph.read().await;
-                let caps = derive_granted_capabilities(&new_manifest.id, &new_manifest.requires_plugins, &dg);
+                let caps = derive_granted_capabilities(
+                    &new_manifest.id,
+                    &new_manifest.requires_plugins,
+                    &dg,
+                );
                 build_grant_status(&new_manifest.requires_plugins, &caps)
             };
-            let init_ctx = PluginInitContext { session: init_session.clone(), grants: provisional_grants };
+            let init_ctx = PluginInitContext {
+                session: init_session.clone(),
+                grants: provisional_grants,
+            };
             let init_clone = init_session.clone();
             tokio::task::spawn_blocking(move || {
-                host_functions::set_call_session(init_clone.session_id.clone(), init_clone.client.clone());
+                host_functions::set_call_session(
+                    init_clone.session_id.clone(),
+                    init_clone.client.clone(),
+                );
                 let mut p = pool_clone
                     .get(Duration::from_secs(5))
                     .map_err(|e| PluginRuntimeError::CallFailed { source: e })?
-                    .ok_or_else(|| PluginRuntimeError::Pool("timeout on on_load during reload".into()))?;
+                    .ok_or_else(|| {
+                        PluginRuntimeError::Pool("timeout on on_load during reload".into())
+                    })?;
                 p.call::<Json<PluginInitContext>, ()>("on_load", Json(init_ctx))
                     .map_err(|e| PluginRuntimeError::CallFailed { source: e })
             })
@@ -1968,10 +2083,13 @@ impl<HostCtx> PluginRuntime<HostCtx> {
         let new_map = {
             // Update dep_graph before deriving grants.
             let mut dg = self.dep_graph.write().await;
-            dg.insert(id.clone(), PluginDepInfo {
-                version: new_version,
-                requires: new_requires.clone(),
-            });
+            dg.insert(
+                id.clone(),
+                PluginDepInfo {
+                    version: new_version,
+                    requires: new_requires.clone(),
+                },
+            );
             let granted_capabilities = derive_granted_capabilities(id, &new_requires, &dg);
             drop(dg);
 
@@ -2159,10 +2277,13 @@ impl<HostCtx> PluginRuntime<HostCtx> {
         // Validate dependency constraints against the current dep_graph.
         {
             let mut dg = self.dep_graph.write().await;
-            dg.insert(manifest.id.clone(), PluginDepInfo {
-                version: manifest.version.clone(),
-                requires: manifest.requires_plugins.clone(),
-            });
+            dg.insert(
+                manifest.id.clone(),
+                PluginDepInfo {
+                    version: manifest.version.clone(),
+                    requires: manifest.requires_plugins.clone(),
+                },
+            );
             if let Err(e) = dg.check_acyclic() {
                 dg.remove(&manifest.id);
                 return Err(PluginRuntimeError::Pool(e.to_string()));
@@ -2174,7 +2295,9 @@ impl<HostCtx> PluginRuntime<HostCtx> {
             // Validate required function visibility (checked against loaded plugins' manifests).
             let plugins = self.plugins.read().await;
             for dep in &manifest.requires_plugins {
-                if !dep.required { continue; }
+                if !dep.required {
+                    continue;
+                }
                 if let Some(target) = plugins.get(&dep.id) {
                     for func in &dep.functions {
                         if !target.manifest.exports.public.contains_key(func) {
@@ -2203,7 +2326,11 @@ impl<HostCtx> PluginRuntime<HostCtx> {
             match cap {
                 HostCapability::Invoke { names } => {
                     for name in names {
-                        if !self.invocation_registry.handlers.contains_key(name.as_str()) {
+                        if !self
+                            .invocation_registry
+                            .handlers
+                            .contains_key(name.as_str())
+                        {
                             return Err(PluginRuntimeError::CapabilityDenied {
                                 plugin: manifest.id.clone(),
                                 capability: format!("Invoke({name}): not registered"),
@@ -2256,12 +2383,12 @@ impl<HostCtx> PluginRuntime<HostCtx> {
             let handlers = self.extension_handlers.read().await;
             for (ns, val) in &manifest.extensions {
                 match handlers.get(ns) {
-                    Some(handler) => handler
-                        .validate(&manifest.id, val)
-                        .map_err(|source| PluginRuntimeError::ManifestExtension {
+                    Some(handler) => handler.validate(&manifest.id, val).map_err(|source| {
+                        PluginRuntimeError::ManifestExtension {
                             plugin: manifest.id.clone(),
                             source,
-                        })?,
+                        }
+                    })?,
                     None => match &self.on_unknown_extension {
                         OnUnknownExtension::Warn => {
                             tracing::warn!(plugin = ?manifest.id, namespace = %ns,
@@ -2340,6 +2467,7 @@ impl<HostCtx> PluginRuntime<HostCtx> {
             let init_session = SessionCtx {
                 session_id: SessionId("__init__".into()),
                 user_id: None,
+                email: None,
                 client: ClientCapabilities {
                     protocol_version: PROTOCOL_VERSION,
                     app_version: 0,
@@ -2352,7 +2480,10 @@ impl<HostCtx> PluginRuntime<HostCtx> {
                 derive_granted_capabilities(&manifest.id, &manifest.requires_plugins, &dg)
             };
             let grants = build_grant_status(&manifest.requires_plugins, &provisional_caps);
-            let init_ctx = PluginInitContext { session: init_session.clone(), grants };
+            let init_ctx = PluginInitContext {
+                session: init_session.clone(),
+                grants,
+            };
             let init_clone = init_session.clone();
             tokio::task::spawn_blocking(move || {
                 host_functions::set_call_session(
@@ -2483,7 +2614,8 @@ impl<HostCtx> PluginRuntime<HostCtx> {
         }
 
         // 2. Build synthetic deps for trust group.
-        let sibling_ids: Vec<PluginId> = plugin_wasm_paths.iter().map(|(id, _)| id.clone()).collect();
+        let sibling_ids: Vec<PluginId> =
+            plugin_wasm_paths.iter().map(|(id, _)| id.clone()).collect();
         let synthetic_deps = if bundle_manifest.bundle.trust_group.mutual_call_plugin {
             synthesise_trust_group(&sibling_ids, &public_fns_by_id)
         } else {
@@ -2638,7 +2770,11 @@ impl<HostCtx> PluginRuntime<HostCtx> {
             if !plugin.enabled.load(Ordering::Relaxed) {
                 return Err(PluginRuntimeError::PluginDisabled(plugin_id.clone()));
             }
-            (plugin.pool.clone(), plugin.active_count.clone(), plugin.pool_size)
+            (
+                plugin.pool.clone(),
+                plugin.active_count.clone(),
+                plugin.pool_size,
+            )
         };
 
         // Serialize up front so the Value (Send + 'static) can cross the spawn_blocking boundary.
@@ -2718,23 +2854,27 @@ impl<HostCtx> PluginRuntime<HostCtx> {
             let manifest = &loaded.manifest;
 
             for slot_reg in &manifest.slots {
-                let priority = loaded.config.resolve(&slot_reg.name, &slot_reg.priority_hint);
+                let priority = loaded
+                    .config
+                    .resolve(&slot_reg.name, &slot_reg.priority_hint);
                 slots
                     .entry(slot_reg.name.clone())
                     .or_default()
                     .push((priority, id.clone()));
             }
             for hook_reg in &manifest.hooks {
-                let priority =
-                    loaded.config.resolve(&hook_reg.hook_name, &hook_reg.priority_hint);
+                let priority = loaded
+                    .config
+                    .resolve(&hook_reg.hook_name, &hook_reg.priority_hint);
                 hooks
                     .entry(hook_reg.hook_name.clone())
                     .or_default()
                     .push((priority, id.clone()));
             }
             for transform in &manifest.transforms {
-                let priority =
-                    loaded.config.resolve(&transform.transform_fn, &transform.priority_hint);
+                let priority = loaded
+                    .config
+                    .resolve(&transform.transform_fn, &transform.priority_hint);
                 let entry = TransformEntry {
                     plugin_id: id.clone(),
                     transform_fn: transform.transform_fn.clone(),
@@ -2861,7 +3001,10 @@ impl<HostCtx> PluginRuntime<HostCtx> {
 ///
 /// Only handles the selectors that appear as outer targets in practice; returns false
 /// for uncommon forms (Any, Within-as-outer) so they never match accidentally.
-fn selectors_equal(a: &dioxus_extism_protocol::Selector, b: &dioxus_extism_protocol::Selector) -> bool {
+fn selectors_equal(
+    a: &dioxus_extism_protocol::Selector,
+    b: &dioxus_extism_protocol::Selector,
+) -> bool {
     use dioxus_extism_protocol::Selector;
     match (a, b) {
         (Selector::Slot(x), Selector::Slot(y))
@@ -2912,7 +3055,10 @@ fn traverse_and_apply(
                 for child in el.children {
                     apply_within_op_to_child(child, &d, &mut new_children).await;
                 }
-                PluginView::Element(ViewElement { children: new_children, ..el })
+                PluginView::Element(ViewElement {
+                    children: new_children,
+                    ..el
+                })
             }
             PluginView::Fragment(children) => {
                 let mut new_children = Vec::with_capacity(children.len());
@@ -2963,9 +3109,17 @@ async fn apply_within_op_to_child(
                 return;
             }
             TransformOp::SetAttr(k, v) => {
-                out.push(crate::tree::set_attr_on_view(child, k.clone(), AttrValue::String({
-                    if let AttrValue::String(s) = v { s.clone() } else { String::new() }
-                })));
+                out.push(crate::tree::set_attr_on_view(
+                    child,
+                    k.clone(),
+                    AttrValue::String({
+                        if let AttrValue::String(s) = v {
+                            s.clone()
+                        } else {
+                            String::new()
+                        }
+                    }),
+                ));
                 return;
             }
             _ => {}
@@ -3039,7 +3193,6 @@ async fn apply_within_op_to_child(
         out.push(child);
     }
 }
-
 
 /// Returns `true` if `view` contains a `HostComponent("__content__")` at any depth.
 fn view_contains_content_placeholder(view: &PluginView) -> bool {
@@ -3245,7 +3398,11 @@ impl<HostCtx> PluginRuntimeBuilder<HostCtx> {
 
     /// Load a plugin with fine-grained per-contribution priority overrides.
     #[must_use]
-    pub fn add_plugin_with_config(mut self, source: PluginSource, config: PluginInstallConfig) -> Self {
+    pub fn add_plugin_with_config(
+        mut self,
+        source: PluginSource,
+        config: PluginInstallConfig,
+    ) -> Self {
         self.sources.push((source, config));
         self
     }
@@ -3325,8 +3482,10 @@ impl<HostCtx> PluginRuntimeBuilder<HostCtx> {
         let ns: String = namespace.into();
         let check_arc: Arc<LoadTimeCapabilityCheckFn> = Arc::new(check);
         let check_clone = Arc::clone(&check_arc);
-        self.load_time_capability_checks.push((ns.clone(), check_arc));
-        self.capability_checks.push((ns, Arc::new(move |id, val, _ctx| check_clone(id, val))));
+        self.load_time_capability_checks
+            .push((ns.clone(), check_arc));
+        self.capability_checks
+            .push((ns, Arc::new(move |id, val, _ctx| check_clone(id, val))));
         self
     }
 
@@ -3342,13 +3501,13 @@ impl<HostCtx> PluginRuntimeBuilder<HostCtx> {
     pub fn with_capability_check_ctx(
         mut self,
         namespace: impl Into<String>,
-        check: impl Fn(&PluginId, &serde_json::Value, &CallContext<'_, HostCtx>)
-                -> Result<(), String>
-            + Send
-            + Sync
-            + 'static,
+        check: impl Fn(&PluginId, &serde_json::Value, &CallContext<'_, HostCtx>) -> Result<(), String>
+        + Send
+        + Sync
+        + 'static,
     ) -> Self {
-        self.capability_checks.push((namespace.into(), Arc::new(check)));
+        self.capability_checks
+            .push((namespace.into(), Arc::new(check)));
         self
     }
 
@@ -3364,8 +3523,7 @@ impl<HostCtx> PluginRuntimeBuilder<HostCtx> {
         mut self,
         policy: impl Fn(&PluginId, &str) -> bool + Send + Sync + 'static,
     ) -> Self {
-        self.route_replace_policy =
-            Some(Arc::new(move |id, route, _ctx| policy(id, route)));
+        self.route_replace_policy = Some(Arc::new(move |id, route, _ctx| policy(id, route)));
         self
     }
 
@@ -3388,7 +3546,10 @@ impl<HostCtx> PluginRuntimeBuilder<HostCtx> {
     /// `public_key_bytes` must be exactly 32 bytes.
     #[must_use]
     pub fn with_trust_key(mut self, key_id: impl Into<String>, public_key_bytes: Vec<u8>) -> Self {
-        self.trust_keys.push(TrustKey { key_id: key_id.into(), public_key_bytes });
+        self.trust_keys.push(TrustKey {
+            key_id: key_id.into(),
+            public_key_bytes,
+        });
         self
     }
 
@@ -3437,12 +3598,12 @@ impl<HostCtx> PluginRuntimeBuilder<HostCtx> {
     pub fn with_grant_policy(
         mut self,
         policy: impl Fn(
-                &dioxus_extism_protocol::GrantRequest,
-                &CallContext<'_, HostCtx>,
-            ) -> dioxus_extism_protocol::GrantDecision
-            + Send
-            + Sync
-            + 'static,
+            &dioxus_extism_protocol::GrantRequest,
+            &CallContext<'_, HostCtx>,
+        ) -> dioxus_extism_protocol::GrantDecision
+        + Send
+        + Sync
+        + 'static,
     ) -> Self {
         self.grant_policy = Some(Arc::new(policy));
         self
@@ -3505,7 +3666,9 @@ impl<HostCtx> PluginRuntimeBuilder<HostCtx> {
 
         let mut invocation_registry = InvocationRegistry::new();
         for (name, handler, timeout) in self.invocations {
-            invocation_registry.handlers.insert(name, (handler, timeout));
+            invocation_registry
+                .handlers
+                .insert(name, (handler, timeout));
         }
         let invocation_registry = Arc::new(invocation_registry);
 
@@ -3574,7 +3737,9 @@ impl<HostCtx> PluginRuntimeBuilder<HostCtx> {
                                 if !capability_checks.contains_key(namespace) {
                                     return Err(PluginRuntimeError::CapabilityDenied {
                                         plugin: plugin_manifest.id.clone(),
-                                        capability: format!("Custom({namespace}): no check registered"),
+                                        capability: format!(
+                                            "Custom({namespace}): no check registered"
+                                        ),
                                     });
                                 }
                             }
@@ -3593,12 +3758,14 @@ impl<HostCtx> PluginRuntimeBuilder<HostCtx> {
             // Validate all manifest extensions before committing to pool build.
             for (ns, val) in &plugin_manifest.extensions {
                 match extension_handlers.get(ns) {
-                    Some(handler) => handler
-                        .validate(&plugin_manifest.id, val)
-                        .map_err(|source| PluginRuntimeError::ManifestExtension {
-                            plugin: plugin_manifest.id.clone(),
-                            source,
-                        })?,
+                    Some(handler) => {
+                        handler
+                            .validate(&plugin_manifest.id, val)
+                            .map_err(|source| PluginRuntimeError::ManifestExtension {
+                                plugin: plugin_manifest.id.clone(),
+                                source,
+                            })?
+                    }
                     None => match &on_unknown_extension {
                         OnUnknownExtension::Warn => {
                             tracing::warn!(
@@ -3661,7 +3828,9 @@ impl<HostCtx> PluginRuntimeBuilder<HostCtx> {
                 &trust_keys,
             );
             if !trust_tag.verified && require_signature {
-                return Err(PluginRuntimeError::UntrustedPlugin(plugin_manifest.id.clone()));
+                return Err(PluginRuntimeError::UntrustedPlugin(
+                    plugin_manifest.id.clone(),
+                ));
             }
 
             let ext_manifest = extism::Manifest::new([extism::Wasm::data(bytes)]);
@@ -3687,6 +3856,7 @@ impl<HostCtx> PluginRuntimeBuilder<HostCtx> {
                 let init_session = SessionCtx {
                     session_id: SessionId("__init__".into()),
                     user_id: None,
+                    email: None,
                     client: ClientCapabilities {
                         protocol_version: PROTOCOL_VERSION,
                         app_version: 0,
@@ -3698,17 +3868,27 @@ impl<HostCtx> PluginRuntimeBuilder<HostCtx> {
                 let provisional_dg = {
                     let mut g = DepGraph::new();
                     for (id, p) in &all_plugins {
-                        g.insert(id.clone(), PluginDepInfo {
-                            version: p.manifest.version.clone(),
-                            requires: p.manifest.requires_plugins.clone(),
-                        });
+                        g.insert(
+                            id.clone(),
+                            PluginDepInfo {
+                                version: p.manifest.version.clone(),
+                                requires: p.manifest.requires_plugins.clone(),
+                            },
+                        );
                     }
                     g
                 };
-                let provisional_caps =
-                    derive_granted_capabilities(&plugin_manifest.id, &plugin_manifest.requires_plugins, &provisional_dg);
-                let grants = build_grant_status(&plugin_manifest.requires_plugins, &provisional_caps);
-                let init_ctx = PluginInitContext { session: init_session.clone(), grants };
+                let provisional_caps = derive_granted_capabilities(
+                    &plugin_manifest.id,
+                    &plugin_manifest.requires_plugins,
+                    &provisional_dg,
+                );
+                let grants =
+                    build_grant_status(&plugin_manifest.requires_plugins, &provisional_caps);
+                let init_ctx = PluginInitContext {
+                    session: init_session.clone(),
+                    grants,
+                };
                 let init_session_clone = init_session.clone();
                 tokio::task::spawn_blocking(move || {
                     host_functions::set_call_session(
@@ -3718,9 +3898,7 @@ impl<HostCtx> PluginRuntimeBuilder<HostCtx> {
                     let mut p = pool_clone
                         .get(Duration::from_secs(5))
                         .map_err(|e| PluginRuntimeError::CallFailed { source: e })?
-                        .ok_or_else(|| {
-                            PluginRuntimeError::Pool("timeout on on_load".into())
-                        })?;
+                        .ok_or_else(|| PluginRuntimeError::Pool("timeout on on_load".into()))?;
                     p.call::<Json<PluginInitContext>, ()>("on_load", Json(init_ctx))
                         .map_err(|e| PluginRuntimeError::CallFailed { source: e })
                 })
@@ -3776,13 +3954,18 @@ impl<HostCtx> PluginRuntimeBuilder<HostCtx> {
         // Build dep_graph from all loaded plugins and derive CallPlugin grants.
         let mut built_dep_graph = DepGraph::new();
         for (id, loaded) in &all_plugins {
-            built_dep_graph.insert(id.clone(), PluginDepInfo {
-                version: loaded.manifest.version.clone(),
-                requires: loaded.manifest.requires_plugins.clone(),
-            });
+            built_dep_graph.insert(
+                id.clone(),
+                PluginDepInfo {
+                    version: loaded.manifest.version.clone(),
+                    requires: loaded.manifest.requires_plugins.clone(),
+                },
+            );
         }
         // Acyclicity check (should not fail since build-order is sequential, but enforce).
-        built_dep_graph.check_acyclic().map_err(|e| PluginRuntimeError::Pool(e.to_string()))?;
+        built_dep_graph
+            .check_acyclic()
+            .map_err(|e| PluginRuntimeError::Pool(e.to_string()))?;
         // Derive grants (no host context available at build time).
         for (id, loaded) in all_plugins.iter_mut() {
             loaded.granted_capabilities = derive_granted_capabilities(
@@ -3793,8 +3976,10 @@ impl<HostCtx> PluginRuntimeBuilder<HostCtx> {
         }
 
         let event_bus = EventBus::build_from_plugins(&all_plugins);
-        let registries =
-            PluginRuntime::<HostCtx>::build_registries(&all_plugins, self.plugin_page_prefix.as_deref())?;
+        let registries = PluginRuntime::<HostCtx>::build_registries(
+            &all_plugins,
+            self.plugin_page_prefix.as_deref(),
+        )?;
         let (override_map_tx, _) = broadcast::channel::<OverrideMap>(32);
 
         let plugin_dispatch = PluginDispatch::new();
@@ -3831,7 +4016,14 @@ impl<HostCtx> PluginRuntimeBuilder<HostCtx> {
         {
             let mut pools = plugin_dispatch.pools.write().await;
             for (id, loaded) in runtime.plugins.read().await.iter() {
-                pools.insert(id.clone(), (loaded.pool.clone(), loaded.active_count.clone(), loaded.pool_size));
+                pools.insert(
+                    id.clone(),
+                    (
+                        loaded.pool.clone(),
+                        loaded.active_count.clone(),
+                        loaded.pool_size,
+                    ),
+                );
             }
         }
 
@@ -3893,7 +4085,11 @@ pub fn build_grant_status(
     for dep in requires {
         for func in &dep.functions {
             let granted = granted_capabilities.iter().any(|cap| {
-                if let HostCapability::CallPlugin { target_plugin_id, allowed_functions } = cap {
+                if let HostCapability::CallPlugin {
+                    target_plugin_id,
+                    allowed_functions,
+                } = cap
+                {
                     target_plugin_id == &dep.id && allowed_functions.contains(func)
                 } else {
                     false
@@ -3929,7 +4125,11 @@ pub fn call_plugin_map(
     let mut map: std::collections::HashMap<PluginId, std::collections::HashSet<String>> =
         std::collections::HashMap::new();
     for cap in capabilities {
-        if let HostCapability::CallPlugin { target_plugin_id, allowed_functions } = cap {
+        if let HostCapability::CallPlugin {
+            target_plugin_id,
+            allowed_functions,
+        } = cap
+        {
             map.entry(target_plugin_id.clone())
                 .or_default()
                 .extend(allowed_functions.iter().cloned());
@@ -3953,12 +4153,12 @@ pub(crate) fn build_optional_grant_request(
     let mut target_ids = Vec::new();
 
     for dep in requires {
-        if dep.required { continue; }
-        let satisfiable = dep_graph.version_of(&dep.id)
-            .is_some_and(|v| {
-                crate::dep_graph::check_version_match(plugin_id, &dep.id, &dep.version.0, v)
-                    .is_ok()
-            });
+        if dep.required {
+            continue;
+        }
+        let satisfiable = dep_graph.version_of(&dep.id).is_some_and(|v| {
+            crate::dep_graph::check_version_match(plugin_id, &dep.id, &dep.version.0, v).is_ok()
+        });
         items.push(GrantRequestItem {
             kind: CapabilityKind::CallPlugin,
             target_plugin: dep.id.clone(),
@@ -3967,7 +4167,13 @@ pub(crate) fn build_optional_grant_request(
         });
         target_ids.push(dep.id.clone());
     }
-    (GrantRequest { plugin_id: plugin_id.clone(), items }, target_ids)
+    (
+        GrantRequest {
+            plugin_id: plugin_id.clone(),
+            items,
+        },
+        target_ids,
+    )
 }
 
 /// Derive `HostCapability::CallPlugin` entries for a plugin from its `requires_plugins` list.
@@ -3993,7 +4199,9 @@ pub fn derive_granted_capabilities(
                 &dep.id,
                 &dep.version.0,
                 target_version,
-            ).is_err() {
+            )
+            .is_err()
+            {
                 return None;
             }
             Some(HostCapability::CallPlugin {
@@ -4045,15 +4253,19 @@ impl<HostCtx> PluginRuntime<HostCtx> {
     where
         S: Clone + Send + Sync + 'static,
     {
+        use axum::body::Bytes;
         use axum::extract::{Path, Query};
         use axum::http::{HeaderMap, HeaderName, HeaderValue, StatusCode};
-        use axum::body::Bytes;
         use axum::response::IntoResponse as _;
         use dioxus_extism_protocol::{ApiRequest, ApiResponse};
 
         let entries: Vec<((String, String), ApiRouteEntry)> = {
             let regs = self.registries.read().await;
-            regs.api_routes.0.iter().map(|(k, v)| (k.clone(), v.clone())).collect()
+            regs.api_routes
+                .0
+                .iter()
+                .map(|(k, v)| (k.clone(), v.clone()))
+                .collect()
         };
 
         let mut router = axum::Router::<S>::new();
@@ -4064,12 +4276,10 @@ impl<HostCtx> PluginRuntime<HostCtx> {
             let handler = {
                 let entry = entry.clone();
                 let metrics = self.metrics.clone();
-                move |
-                    Path(path_params): Path<HashMap<String, String>>,
-                    Query(query_params): Query<HashMap<String, String>>,
-                    headers: HeaderMap,
-                    body: Bytes,
-                | {
+                move |Path(path_params): Path<HashMap<String, String>>,
+                      Query(query_params): Query<HashMap<String, String>>,
+                      headers: HeaderMap,
+                      body: Bytes| {
                     let pool = entry.pool.clone();
                     let active_count = entry.active_count.clone();
                     let pool_size = entry.pool_size;
@@ -4085,7 +4295,9 @@ impl<HostCtx> PluginRuntime<HostCtx> {
                         let headers_map: HashMap<String, String> = headers
                             .iter()
                             .filter_map(|(k, v)| {
-                                v.to_str().ok().map(|v| (k.as_str().to_owned(), v.to_owned()))
+                                v.to_str()
+                                    .ok()
+                                    .map(|v| (k.as_str().to_owned(), v.to_owned()))
                             })
                             .collect();
                         let request = ApiRequest {
@@ -4097,6 +4309,7 @@ impl<HostCtx> PluginRuntime<HostCtx> {
                         let stub = SessionCtx {
                             session_id: SessionId("__api__".into()),
                             user_id: None,
+                            email: None,
                             client: ClientCapabilities {
                                 protocol_version: PROTOCOL_VERSION,
                                 app_version: 0,
@@ -4119,10 +4332,8 @@ impl<HostCtx> PluginRuntime<HostCtx> {
                             Ok(resp) => {
                                 let status = StatusCode::from_u16(resp.status)
                                     .unwrap_or(StatusCode::INTERNAL_SERVER_ERROR);
-                                let body_val =
-                                    resp.body.unwrap_or(serde_json::Value::Null);
-                                let mut response =
-                                    (status, axum::Json(body_val)).into_response();
+                                let body_val = resp.body.unwrap_or(serde_json::Value::Null);
+                                let mut response = (status, axum::Json(body_val)).into_response();
                                 for (k, v) in resp.headers {
                                     if let (Ok(name), Ok(val)) = (
                                         HeaderName::from_bytes(k.as_bytes()),
@@ -4141,9 +4352,7 @@ impl<HostCtx> PluginRuntime<HostCtx> {
                                 );
                                 (
                                     StatusCode::INTERNAL_SERVER_ERROR,
-                                    axum::Json(
-                                        serde_json::json!({"error": e.to_string()}),
-                                    ),
+                                    axum::Json(serde_json::json!({"error": e.to_string()})),
                                 )
                                     .into_response()
                             }
@@ -4153,10 +4362,10 @@ impl<HostCtx> PluginRuntime<HostCtx> {
             };
 
             let method_router = match method_str.as_str() {
-                "GET"    => axum::routing::get(handler),
-                "POST"   => axum::routing::post(handler),
-                "PUT"    => axum::routing::put(handler),
-                "PATCH"  => axum::routing::patch(handler),
+                "GET" => axum::routing::get(handler),
+                "POST" => axum::routing::post(handler),
+                "PUT" => axum::routing::put(handler),
+                "PATCH" => axum::routing::patch(handler),
                 "DELETE" => axum::routing::delete(handler),
                 other => {
                     tracing::warn!("api_router: unknown method {other}, skipping {path_str}");
@@ -4281,6 +4490,7 @@ mod tests {
         let session = SessionCtx {
             session_id: SessionId("test".into()),
             user_id: None,
+            email: None,
             client: ClientCapabilities::default(),
             caller: None,
         };
@@ -4309,13 +4519,16 @@ mod tests {
 
         let plugin_id = PluginId("test/p".into());
         let session_id = SessionId("s1".into());
-        runtime.set_plugin_state(&plugin_id, &session_id, "key", json!("value")).await;
+        runtime
+            .set_plugin_state(&plugin_id, &session_id, "key", json!("value"))
+            .await;
 
         // Backdate last_access to TTL/2 ago — still within TTL.
-        runtime.session_last_access.write().await.insert(
-            session_id.clone(),
-            std::time::Instant::now() - ttl / 2,
-        );
+        runtime
+            .session_last_access
+            .write()
+            .await
+            .insert(session_id.clone(), std::time::Instant::now() - ttl / 2);
 
         // Run eviction logic inline.
         let cutoff = std::time::Instant::now().checked_sub(ttl).expect("sub");
@@ -4332,7 +4545,9 @@ mod tests {
             runtime.session_last_access.write().await.remove(id);
         }
 
-        let val = runtime.get_plugin_state(&plugin_id, "key", &session_id).await;
+        let val = runtime
+            .get_plugin_state(&plugin_id, "key", &session_id)
+            .await;
         assert!(val.is_some(), "session state evicted too early");
     }
 
@@ -4347,7 +4562,9 @@ mod tests {
 
         let plugin_id = PluginId("test/p".into());
         let session_id = SessionId("s2".into());
-        runtime.set_plugin_state(&plugin_id, &session_id, "key", json!("value")).await;
+        runtime
+            .set_plugin_state(&plugin_id, &session_id, "key", json!("value"))
+            .await;
 
         // Backdate last_access to TTL + 1 second ago — clearly expired.
         runtime.session_last_access.write().await.insert(
@@ -4370,8 +4587,13 @@ mod tests {
             runtime.session_last_access.write().await.remove(id);
         }
 
-        let val = runtime.get_plugin_state(&plugin_id, "key", &session_id).await;
-        assert!(val.is_none(), "session state should have been evicted after TTL");
+        let val = runtime
+            .get_plugin_state(&plugin_id, "key", &session_id)
+            .await;
+        assert!(
+            val.is_none(),
+            "session state should have been evicted after TTL"
+        );
     }
 
     // ── Dep-graph tests (step 14) ─────────────────────────────────────────────
@@ -4379,38 +4601,86 @@ mod tests {
     #[test]
     fn dep_graph_required_dep_missing_returns_error() {
         let g = DepGraph::new();
-        let deps = vec![dioxus_extism_protocol::PluginDependency::new("b", "^1.0", true, vec![])];
-        let err = g.validate_required_deps(&PluginId("a".into()), &deps).unwrap_err();
+        let deps = vec![dioxus_extism_protocol::PluginDependency::new(
+            "b",
+            "^1.0",
+            true,
+            vec![],
+        )];
+        let err = g
+            .validate_required_deps(&PluginId("a".into()), &deps)
+            .unwrap_err();
         assert!(matches!(err, InstallError::DependencyMissing { .. }));
     }
 
     #[test]
     fn dep_graph_three_node_cycle_detected() {
         let mut g = DepGraph::new();
-        g.insert(PluginId("a".into()), PluginDepInfo {
-            version: "1.0.0".into(),
-            requires: vec![dioxus_extism_protocol::PluginDependency::new("b", "^1.0", true, vec![])],
-        });
-        g.insert(PluginId("b".into()), PluginDepInfo {
-            version: "1.0.0".into(),
-            requires: vec![dioxus_extism_protocol::PluginDependency::new("c", "^1.0", true, vec![])],
-        });
-        g.insert(PluginId("c".into()), PluginDepInfo {
-            version: "1.0.0".into(),
-            requires: vec![dioxus_extism_protocol::PluginDependency::new("a", "^1.0", true, vec![])],
-        });
-        assert!(matches!(g.check_acyclic(), Err(InstallError::CyclicDependency { .. })));
+        g.insert(
+            PluginId("a".into()),
+            PluginDepInfo {
+                version: "1.0.0".into(),
+                requires: vec![dioxus_extism_protocol::PluginDependency::new(
+                    "b",
+                    "^1.0",
+                    true,
+                    vec![],
+                )],
+            },
+        );
+        g.insert(
+            PluginId("b".into()),
+            PluginDepInfo {
+                version: "1.0.0".into(),
+                requires: vec![dioxus_extism_protocol::PluginDependency::new(
+                    "c",
+                    "^1.0",
+                    true,
+                    vec![],
+                )],
+            },
+        );
+        g.insert(
+            PluginId("c".into()),
+            PluginDepInfo {
+                version: "1.0.0".into(),
+                requires: vec![dioxus_extism_protocol::PluginDependency::new(
+                    "a",
+                    "^1.0",
+                    true,
+                    vec![],
+                )],
+            },
+        );
+        assert!(matches!(
+            g.check_acyclic(),
+            Err(InstallError::CyclicDependency { .. })
+        ));
     }
 
     #[test]
     fn grant_derivation_required_dep_present_grants_capability() {
         let mut g = DepGraph::new();
-        g.insert(PluginId("b".into()), PluginDepInfo { version: "1.0.0".into(), requires: vec![] });
-        let dep = dioxus_extism_protocol::PluginDependency::new("b", "^1.0", true, vec!["fn1".into(), "fn2".into()]);
+        g.insert(
+            PluginId("b".into()),
+            PluginDepInfo {
+                version: "1.0.0".into(),
+                requires: vec![],
+            },
+        );
+        let dep = dioxus_extism_protocol::PluginDependency::new(
+            "b",
+            "^1.0",
+            true,
+            vec!["fn1".into(), "fn2".into()],
+        );
         let caps = derive_granted_capabilities(&PluginId("a".into()), &[dep], &g);
         assert_eq!(caps.len(), 1);
         match &caps[0] {
-            HostCapability::CallPlugin { target_plugin_id, allowed_functions } => {
+            HostCapability::CallPlugin {
+                target_plugin_id,
+                allowed_functions,
+            } => {
                 assert_eq!(target_plugin_id.0, "b");
                 assert_eq!(allowed_functions, &["fn1", "fn2"]);
             }
@@ -4421,8 +4691,15 @@ mod tests {
     #[test]
     fn grant_status_reflects_required_grant() {
         let mut g = DepGraph::new();
-        g.insert(PluginId("b".into()), PluginDepInfo { version: "1.0.0".into(), requires: vec![] });
-        let dep = dioxus_extism_protocol::PluginDependency::new("b", "^1.0", true, vec!["fn1".into()]);
+        g.insert(
+            PluginId("b".into()),
+            PluginDepInfo {
+                version: "1.0.0".into(),
+                requires: vec![],
+            },
+        );
+        let dep =
+            dioxus_extism_protocol::PluginDependency::new("b", "^1.0", true, vec!["fn1".into()]);
         let caps = derive_granted_capabilities(&PluginId("a".into()), &[dep.clone()], &g);
         let status = build_grant_status(&[dep], &caps);
         assert_eq!(status.call_plugin.len(), 1);
@@ -4435,7 +4712,8 @@ mod tests {
     #[test]
     fn grant_status_optional_missing_dep_is_not_granted() {
         let g = DepGraph::new();
-        let dep = dioxus_extism_protocol::PluginDependency::new("b", "^1.0", false, vec!["fn1".into()]);
+        let dep =
+            dioxus_extism_protocol::PluginDependency::new("b", "^1.0", false, vec!["fn1".into()]);
         let caps = derive_granted_capabilities(&PluginId("a".into()), &[dep.clone()], &g);
         let status = build_grant_status(&[dep], &caps);
         assert_eq!(status.call_plugin.len(), 1);
@@ -4448,17 +4726,31 @@ mod tests {
     #[tokio::test]
     async fn recompute_grants_default_allow_no_policy() {
         use dioxus_extism_protocol::PluginDependency;
-        let runtime = PluginRuntimeBuilder::<()>::new().build().await.expect("build");
+        let runtime = PluginRuntimeBuilder::<()>::new()
+            .build()
+            .await
+            .expect("build");
         let consumer_id = PluginId("consumer".into());
         let provider_id = PluginId("provider".into());
         runtime.dep_graph.write().await.insert(
             provider_id.clone(),
-            PluginDepInfo { version: "1.0.0".into(), requires: vec![] },
+            PluginDepInfo {
+                version: "1.0.0".into(),
+                requires: vec![],
+            },
         );
-        let requires = vec![PluginDependency::new("provider", "^1.0", false, vec!["fn1".into()])];
+        let requires = vec![PluginDependency::new(
+            "provider",
+            "^1.0",
+            false,
+            vec!["fn1".into()],
+        )];
         runtime.dep_graph.write().await.insert(
             consumer_id.clone(),
-            PluginDepInfo { version: "1.0.0".into(), requires: requires.clone() },
+            PluginDepInfo {
+                version: "1.0.0".into(),
+                requires: requires.clone(),
+            },
         );
         // Insert synthetic plugin.
         {
@@ -4475,7 +4767,10 @@ mod tests {
             );
         }
         let session = SessionCtx::default();
-        runtime.recompute_grants(&consumer_id, &session, &()).await.expect("recompute");
+        runtime
+            .recompute_grants(&consumer_id, &session, &())
+            .await
+            .expect("recompute");
         let plugins = runtime.plugins.read().await;
         let p = plugins.get(&consumer_id).expect("consumer");
         assert_eq!(p.granted_capabilities.len(), 1, "should have 1 grant");
@@ -4484,13 +4779,17 @@ mod tests {
     // ── Grant policy tests (step 5) ──────────────────────────────────────────
 
     fn make_dep_graph_with(
-        id: &str, version: &str,
+        id: &str,
+        version: &str,
         deps: Vec<dioxus_extism_protocol::PluginDependency>,
     ) -> DepGraph {
         let mut g = DepGraph::new();
         g.insert(
             PluginId(id.into()),
-            PluginDepInfo { version: version.into(), requires: deps },
+            PluginDepInfo {
+                version: version.into(),
+                requires: deps,
+            },
         );
         g
     }
@@ -4501,11 +4800,21 @@ mod tests {
         let plugin_id = PluginId("a".into());
         let dep = PluginDependency::new("b", "^1.0", false, vec!["f1".into()]);
         let mut g = DepGraph::new();
-        g.insert(PluginId("b".into()), PluginDepInfo { version: "1.2.0".into(), requires: vec![] });
+        g.insert(
+            PluginId("b".into()),
+            PluginDepInfo {
+                version: "1.2.0".into(),
+                requires: vec![],
+            },
+        );
 
         let caps = derive_granted_capabilities(&plugin_id, &[dep], &g);
         assert_eq!(caps.len(), 1);
-        if let HostCapability::CallPlugin { target_plugin_id, allowed_functions } = &caps[0] {
+        if let HostCapability::CallPlugin {
+            target_plugin_id,
+            allowed_functions,
+        } = &caps[0]
+        {
             assert_eq!(target_plugin_id.0, "b");
             assert_eq!(allowed_functions, &["f1".to_string()]);
         } else {
@@ -4531,7 +4840,13 @@ mod tests {
         let plugin_id = PluginId("a".into());
         let dep = PluginDependency::new("b", "^1.0", false, vec!["f1".into()]);
         let mut g = DepGraph::new();
-        g.insert(PluginId("b".into()), PluginDepInfo { version: "1.0.0".into(), requires: vec![] });
+        g.insert(
+            PluginId("b".into()),
+            PluginDepInfo {
+                version: "1.0.0".into(),
+                requires: vec![],
+            },
+        );
 
         let deps = vec![dep];
         let mut caps = derive_granted_capabilities(&plugin_id, &deps, &g);
@@ -4548,13 +4863,18 @@ mod tests {
         // Policy that vetoes everything.
         let decision: GrantDecision = {
             let _ = (&request, &call_ctx);
-            GrantDecision { denied: (0..request.items.len()).collect() }
+            GrantDecision {
+                denied: (0..request.items.len()).collect(),
+            }
         };
 
         for &idx in &decision.denied {
             if let Some(target_id) = target_ids.get(idx) {
                 caps.retain(|cap| {
-                    if let HostCapability::CallPlugin { target_plugin_id, .. } = cap {
+                    if let HostCapability::CallPlugin {
+                        target_plugin_id, ..
+                    } = cap
+                    {
                         target_plugin_id != target_id
                     } else {
                         true
@@ -4562,7 +4882,10 @@ mod tests {
                 });
             }
         }
-        assert!(caps.is_empty(), "policy veto must remove the optional grant");
+        assert!(
+            caps.is_empty(),
+            "policy veto must remove the optional grant"
+        );
     }
 
     #[tokio::test]
@@ -4579,13 +4902,21 @@ mod tests {
         // Manually insert a dep_graph node and a plugin with one optional dep.
         runtime.dep_graph.write().await.insert(
             PluginId("provider".into()),
-            PluginDepInfo { version: "1.0.0".into(), requires: vec![] },
+            PluginDepInfo {
+                version: "1.0.0".into(),
+                requires: vec![],
+            },
         );
         runtime.dep_graph.write().await.insert(
             PluginId("consumer".into()),
             PluginDepInfo {
                 version: "1.0.0".into(),
-                requires: vec![PluginDependency::new("provider", "^1.0", false, vec!["fn1".into()])],
+                requires: vec![PluginDependency::new(
+                    "provider",
+                    "^1.0",
+                    false,
+                    vec!["fn1".into()],
+                )],
             },
         );
 
@@ -4616,16 +4947,23 @@ mod tests {
             let mut m = dioxus_extism_protocol::PluginManifest::default();
             m.id = consumer_id.clone();
             m.version = "1.0.0".into();
-            m.requires_plugins = vec![
-                PluginDependency::new("provider", "^1.0", false, vec!["fn1".into()])
-            ];
+            m.requires_plugins = vec![PluginDependency::new(
+                "provider",
+                "^1.0",
+                false,
+                vec!["fn1".into()],
+            )];
             m
         };
         let initial_caps = {
             let dg = runtime.dep_graph.read().await;
             derive_granted_capabilities(&consumer_id, &dummy_manifest.requires_plugins, &dg)
         };
-        assert_eq!(initial_caps.len(), 1, "initial caps before policy should have 1 grant");
+        assert_eq!(
+            initial_caps.len(),
+            1,
+            "initial caps before policy should have 1 grant"
+        );
 
         runtime.plugins.write().await.insert(
             consumer_id.clone(),
@@ -4633,9 +4971,9 @@ mod tests {
                 manifest: dummy_manifest,
                 pool: extism::Pool::new_from_builder(
                     || {
-                        extism::PluginBuilder::new(extism::Manifest::new(
-                            Vec::<extism::Wasm>::new(),
-                        ))
+                        extism::PluginBuilder::new(
+                            extism::Manifest::new(Vec::<extism::Wasm>::new()),
+                        )
                         .with_wasi(false)
                         .build()
                     },
@@ -4646,7 +4984,10 @@ mod tests {
                 enabled: AtomicBool::new(true),
                 config: PluginInstallConfig::default(),
                 ctx_arc,
-                trust_tag: crate::trust::TrustTag { verified: false, signer_key_id: None },
+                trust_tag: crate::trust::TrustTag {
+                    verified: false,
+                    signer_key_id: None,
+                },
                 granted_capabilities: initial_caps,
             },
         );
@@ -4700,7 +5041,10 @@ mod tests {
         LoadedPlugin {
             manifest,
             pool: extism::Pool::new_from_builder(
-                || extism::PluginBuilder::new(extism::Manifest::new(Vec::<extism::Wasm>::new())).build(),
+                || {
+                    extism::PluginBuilder::new(extism::Manifest::new(Vec::<extism::Wasm>::new()))
+                        .build()
+                },
                 extism::PoolBuilder::default().with_max_instances(1),
             ),
             pool_size: 1,
@@ -4708,7 +5052,10 @@ mod tests {
             enabled: AtomicBool::new(true),
             config: PluginInstallConfig::default(),
             ctx_arc,
-            trust_tag: crate::trust::TrustTag { verified: false, signer_key_id: None },
+            trust_tag: crate::trust::TrustTag {
+                verified: false,
+                signer_key_id: None,
+            },
             granted_capabilities,
         }
     }

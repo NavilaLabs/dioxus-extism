@@ -48,10 +48,7 @@ fn server_main() {
     type NoteStore = Arc<RwLock<HashMap<String, Vec<Note>>>>;
 
     // Register "get_notes": returns all notes for a slug.
-    fn register_get_notes(
-        builder: PluginRuntimeBuilder,
-        store: NoteStore,
-    ) -> PluginRuntimeBuilder {
+    fn register_get_notes(builder: PluginRuntimeBuilder, store: NoteStore) -> PluginRuntimeBuilder {
         builder.register_invocation(
             "get_notes",
             None,
@@ -84,9 +81,17 @@ fn server_main() {
                     if text.is_empty() {
                         return Ok(store.read().await.get(&slug).cloned().unwrap_or_default());
                     }
-                    let note = Note { id: id_ctr.fetch_add(1, Ordering::Relaxed), text };
+                    let note = Note {
+                        id: id_ctr.fetch_add(1, Ordering::Relaxed),
+                        text,
+                    };
                     // Write the note, then release the lock before the final read.
-                    store.write().await.entry(slug.clone()).or_default().push(note);
+                    store
+                        .write()
+                        .await
+                        .entry(slug.clone())
+                        .or_default()
+                        .push(note);
                     Ok::<Vec<Note>, InvocationError>(
                         store.read().await.get(&slug).cloned().unwrap_or_default(),
                     )
@@ -106,8 +111,7 @@ fn server_main() {
     let next_id = Arc::new(AtomicU64::new(1));
 
     let builder = register_get_notes(PluginRuntimeBuilder::new(), store.clone());
-    let builder = register_add_note(builder, store, next_id)
-        .with_plugin_page_prefix("/p");
+    let builder = register_add_note(builder, store, next_id).with_plugin_page_prefix("/p");
 
     tokio::runtime::Runtime::new()
         .expect("tokio runtime")
@@ -180,7 +184,12 @@ async fn get_page_notes(
         )
         .await;
 
-    let session = SessionCtx { session_id, user_id: None, client: caps, caller: None };
+    let session = SessionCtx {
+        session_id,
+        user_id: None,
+        client: caps,
+        caller: None,
+    };
     runtime
         .render_slot("page-notes", &session)
         .await
