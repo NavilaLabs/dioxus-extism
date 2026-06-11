@@ -1,8 +1,8 @@
 #![allow(unsafe_code)]
 
 use dioxus_extism_pdk::host_fns;
-use dioxus_extism_pdk::prelude::*;
 use dioxus_extism_pdk::plugin;
+use dioxus_extism_pdk::prelude::*;
 
 struct FixtureCapGlobalWriteDenied;
 

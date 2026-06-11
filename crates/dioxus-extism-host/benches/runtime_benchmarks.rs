@@ -11,7 +11,7 @@ use std::time::Duration;
 use criterion::{BenchmarkId, Criterion, criterion_group, criterion_main};
 use dioxus_extism_host::{PluginRuntimeBuilder, PluginSource, RuntimeMetrics};
 use dioxus_extism_protocol::{
-    ClientCapabilities, PluginId, SessionCtx, SessionId, PROTOCOL_VERSION,
+    ClientCapabilities, PROTOCOL_VERSION, PluginId, SessionCtx, SessionId,
 };
 use tokio::runtime::Runtime;
 
@@ -38,6 +38,7 @@ fn default_session() -> SessionCtx {
     SessionCtx {
         session_id: SessionId("bench-session".into()),
         user_id: None,
+        email: None,
         client: ClientCapabilities {
             protocol_version: PROTOCOL_VERSION,
             app_version: 0,
@@ -92,20 +93,22 @@ fn bench_runtime_build(c: &mut Criterion) {
 fn bench_slot_render(c: &mut Criterion) {
     let rt = Runtime::new().expect("tokio runtime");
 
-    let runtime_1 = rt.block_on(
-        PluginRuntimeBuilder::<()>::new()
-            .add_plugin(src(SLOT_NORMAL))
-            .build(),
-    )
-    .expect("build 1_plugin runtime");
+    let runtime_1 = rt
+        .block_on(
+            PluginRuntimeBuilder::<()>::new()
+                .add_plugin(src(SLOT_NORMAL))
+                .build(),
+        )
+        .expect("build 1_plugin runtime");
 
-    let runtime_2 = rt.block_on(
-        PluginRuntimeBuilder::<()>::new()
-            .add_plugin(src(SLOT_NORMAL))
-            .add_plugin(PluginSource::Bytes(std::borrow::Cow::Borrowed(SLOT_HIGH)))
-            .build(),
-    )
-    .expect("build 2_plugin runtime");
+    let runtime_2 = rt
+        .block_on(
+            PluginRuntimeBuilder::<()>::new()
+                .add_plugin(src(SLOT_NORMAL))
+                .add_plugin(PluginSource::Bytes(std::borrow::Cow::Borrowed(SLOT_HIGH)))
+                .build(),
+        )
+        .expect("build 2_plugin runtime");
 
     let session = default_session();
     let mut group = c.benchmark_group("slot_render");
@@ -281,7 +284,12 @@ fn bench_metrics_overhead(c: &mut Criterion) {
         b.to_async(&tokio_rt).iter(|| {
             let plugin_rt = Arc::clone(&plugin_rt);
             let s = s.clone();
-            async move { plugin_rt.render_slot("test-slot", &s).await.expect("render") }
+            async move {
+                plugin_rt
+                    .render_slot("test-slot", &s)
+                    .await
+                    .expect("render")
+            }
         });
     });
 
@@ -291,7 +299,12 @@ fn bench_metrics_overhead(c: &mut Criterion) {
         b.to_async(&tokio_rt).iter(|| {
             let plugin_rt = Arc::clone(&plugin_rt);
             let s = s.clone();
-            async move { plugin_rt.render_slot("test-slot", &s).await.expect("render") }
+            async move {
+                plugin_rt
+                    .render_slot("test-slot", &s)
+                    .await
+                    .expect("render")
+            }
         });
     });
 

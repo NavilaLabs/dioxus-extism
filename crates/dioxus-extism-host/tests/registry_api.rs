@@ -10,7 +10,7 @@ use dioxus_extism_host::{
     PluginInstallConfig, PluginRuntimeBuilder, PluginRuntimeError, PluginSource,
 };
 use dioxus_extism_protocol::{
-    ClientCapabilities, PluginId, PluginView, SessionCtx, SessionId, PROTOCOL_VERSION,
+    ClientCapabilities, PROTOCOL_VERSION, PluginId, PluginView, SessionCtx, SessionId,
 };
 
 macro_rules! fixture {
@@ -138,7 +138,10 @@ async fn uninstall_removes_plugin() {
     runtime.uninstall(&id).await.expect("uninstall failed");
 
     let plugins = runtime.list_plugins().await;
-    assert!(plugins.is_empty(), "plugin should be removed after uninstall");
+    assert!(
+        plugins.is_empty(),
+        "plugin should be removed after uninstall"
+    );
 }
 
 #[tokio::test]
@@ -167,10 +170,15 @@ async fn disable_makes_slot_return_incompatible() {
     runtime.disable(&id).await.expect("disable failed");
 
     let session = default_session();
-    let contents = runtime.render_slot("test-slot", &session).await.expect("render failed");
+    let contents = runtime
+        .render_slot("test-slot", &session)
+        .await
+        .expect("render failed");
 
     assert!(
-        contents.iter().any(|c| matches!(c.view, PluginView::Incompatible { .. })),
+        contents
+            .iter()
+            .any(|c| matches!(c.view, PluginView::Incompatible { .. })),
         "disabled plugin should produce Incompatible view"
     );
 }
@@ -188,10 +196,15 @@ async fn enable_restores_slot_content() {
     runtime.enable(&id).await.expect("enable failed");
 
     let session = default_session();
-    let contents = runtime.render_slot("test-slot", &session).await.expect("render failed");
+    let contents = runtime
+        .render_slot("test-slot", &session)
+        .await
+        .expect("render failed");
 
     assert!(
-        contents.iter().all(|c| !matches!(c.view, PluginView::Incompatible { .. })),
+        contents
+            .iter()
+            .all(|c| !matches!(c.view, PluginView::Incompatible { .. })),
         "re-enabled plugin should no longer produce Incompatible"
     );
 }
@@ -218,7 +231,11 @@ async fn list_plugins_reflects_trust_tag() {
     let runtime = PluginRuntimeBuilder::<()>::new()
         .add_plugin_with_config(
             src(SLOT_NORMAL_WASM),
-            PluginInstallConfig { signature: Some(sig), key_id: None, ..Default::default() },
+            PluginInstallConfig {
+                signature: Some(sig),
+                key_id: None,
+                ..Default::default()
+            },
         )
         .with_trust_key("list-key", pub_key)
         .build()
@@ -227,8 +244,14 @@ async fn list_plugins_reflects_trust_tag() {
 
     let plugins = runtime.list_plugins().await;
     assert_eq!(plugins.len(), 1);
-    assert!(plugins[0].trust_tag.verified, "summary should reflect verified trust tag");
-    assert_eq!(plugins[0].trust_tag.signer_key_id.as_deref(), Some("list-key"));
+    assert!(
+        plugins[0].trust_tag.verified,
+        "summary should reflect verified trust tag"
+    );
+    assert_eq!(
+        plugins[0].trust_tag.signer_key_id.as_deref(),
+        Some("list-key")
+    );
 }
 
 #[tokio::test]
@@ -243,7 +266,10 @@ async fn install_rejects_future_protocol_version() {
         .await;
 
     assert!(
-        matches!(result, Err(PluginRuntimeError::ProtocolVersionMismatch { .. })),
+        matches!(
+            result,
+            Err(PluginRuntimeError::ProtocolVersionMismatch { .. })
+        ),
         "expected ProtocolVersionMismatch, got: {result:?}"
     );
 }

@@ -101,13 +101,16 @@ fn server_main() {
         .expect("tokio runtime")
         .block_on(async move {
             let wasm_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-                .parent().expect("has parent")
-                .parent().expect("has parent")
-                .parent().expect("has parent")
+                .parent()
+                .expect("has parent")
+                .parent()
+                .expect("has parent")
+                .parent()
+                .expect("has parent")
                 .join("target/wasm32-unknown-unknown/release");
 
             let comments_wasm = wasm_root.join("showcase_plugin_comments.wasm");
-            let stats_wasm    = wasm_root.join("showcase_plugin_stats.wasm");
+            let stats_wasm = wasm_root.join("showcase_plugin_stats.wasm");
 
             let mut builder = builder;
             if comments_wasm.exists() {
@@ -161,7 +164,12 @@ async fn get_showcase_post(
         return Ok(sample_posts().into_iter().find(|p| p.slug == slug));
     };
 
-    let session = SessionCtx { session_id: session_id.clone(), user_id: None, client: caps, caller: None };
+    let session = SessionCtx {
+        session_id: session_id.clone(),
+        user_id: None,
+        client: caps,
+        caller: None,
+    };
 
     // Fire the hook — stats plugin intercepts and increments the view counter.
     let _ = runtime
@@ -191,10 +199,20 @@ async fn get_comments_slot(
 
     let plugin_id = PluginId("showcase/comments".into());
     runtime
-        .set_plugin_state(&plugin_id, &session_id, "current_slug", serde_json::json!(post_slug))
+        .set_plugin_state(
+            &plugin_id,
+            &session_id,
+            "current_slug",
+            serde_json::json!(post_slug),
+        )
         .await;
 
-    let session = SessionCtx { session_id, user_id: None, client: caps, caller: None };
+    let session = SessionCtx {
+        session_id,
+        user_id: None,
+        client: caps,
+        caller: None,
+    };
     runtime
         .render_slot("post-comments", &session)
         .await
@@ -221,10 +239,20 @@ async fn get_stats_slot(
 
     let plugin_id = PluginId("showcase/stats".into());
     runtime
-        .set_plugin_state(&plugin_id, &session_id, "current_slug", serde_json::json!(post_slug))
+        .set_plugin_state(
+            &plugin_id,
+            &session_id,
+            "current_slug",
+            serde_json::json!(post_slug),
+        )
         .await;
 
-    let session = SessionCtx { session_id, user_id: None, client: caps, caller: None };
+    let session = SessionCtx {
+        session_id,
+        user_id: None,
+        client: caps,
+        caller: None,
+    };
     runtime
         .render_slot("post-stats", &session)
         .await

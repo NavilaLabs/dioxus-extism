@@ -5,7 +5,7 @@
 ///     -p fixture-route-replace -p fixture-wrap-a
 use dioxus_extism_host::{PluginRuntimeBuilder, PluginSource, RouteTransforms};
 use dioxus_extism_protocol::{
-    ClientCapabilities, PluginView, SessionCtx, SessionId, PROTOCOL_VERSION,
+    ClientCapabilities, PROTOCOL_VERSION, PluginView, SessionCtx, SessionId,
 };
 
 macro_rules! fixture {
@@ -81,7 +81,10 @@ async fn non_matching_path_no_replacement() {
         .await
         .expect("render_route_transforms failed");
 
-    assert!(result.replacement.is_none(), "non-matching path should produce no replacement");
+    assert!(
+        result.replacement.is_none(),
+        "non-matching path should produce no replacement"
+    );
 }
 
 #[tokio::test]
@@ -99,7 +102,10 @@ async fn policy_deny_blocks_replacement() {
         .await
         .expect("render_route_transforms failed");
 
-    assert!(result.replacement.is_none(), "policy returning false should block replacement");
+    assert!(
+        result.replacement.is_none(),
+        "policy returning false should block replacement"
+    );
 }
 
 #[tokio::test]
@@ -116,7 +122,10 @@ async fn no_policy_allows_by_default() {
         .await
         .expect("render_route_transforms failed");
 
-    assert!(result.replacement.is_some(), "no policy means allow by default");
+    assert!(
+        result.replacement.is_some(),
+        "no policy means allow by default"
+    );
 }
 
 #[tokio::test]
@@ -133,7 +142,10 @@ async fn policy_registered_at_runtime_takes_effect() {
         .render_route_transforms("/replace/10", &session, &())
         .await
         .expect("render_route_transforms failed");
-    assert!(before.replacement.is_some(), "should be allowed before policy");
+    assert!(
+        before.replacement.is_some(),
+        "should be allowed before policy"
+    );
 
     // Register a deny-all policy at runtime.
     runtime.register_route_replace_policy(|_, _| false).await;
@@ -142,5 +154,8 @@ async fn policy_registered_at_runtime_takes_effect() {
         .render_route_transforms("/replace/10", &session, &())
         .await
         .expect("render_route_transforms failed");
-    assert!(after.replacement.is_none(), "policy registered at runtime should deny");
+    assert!(
+        after.replacement.is_none(),
+        "policy registered at runtime should deny"
+    );
 }

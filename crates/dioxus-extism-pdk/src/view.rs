@@ -17,7 +17,9 @@ impl ViewBuilder {
     /// Set a string attribute.
     #[must_use]
     pub fn attr(mut self, name: impl Into<String>, value: impl Into<String>) -> Self {
-        self.0.attrs.push((name.into(), AttrValue::String(value.into())));
+        self.0
+            .attrs
+            .push((name.into(), AttrValue::String(value.into())));
         self
     }
 
@@ -158,49 +160,81 @@ impl ViewBuilder {
     /// Attach a `click` handler.
     #[must_use]
     pub fn on_click(self, handler_id: HandlerId) -> Self {
-        self.on(BoundEventHandler { event: DomEvent::Click, handler_id, debounce_ms: None })
+        self.on(BoundEventHandler {
+            event: DomEvent::Click,
+            handler_id,
+            debounce_ms: None,
+        })
     }
 
     /// Attach an `input` handler.
     #[must_use]
     pub fn on_input(self, handler_id: HandlerId) -> Self {
-        self.on(BoundEventHandler { event: DomEvent::Input, handler_id, debounce_ms: None })
+        self.on(BoundEventHandler {
+            event: DomEvent::Input,
+            handler_id,
+            debounce_ms: None,
+        })
     }
 
     /// Attach a `change` handler.
     #[must_use]
     pub fn on_change(self, handler_id: HandlerId) -> Self {
-        self.on(BoundEventHandler { event: DomEvent::Change, handler_id, debounce_ms: None })
+        self.on(BoundEventHandler {
+            event: DomEvent::Change,
+            handler_id,
+            debounce_ms: None,
+        })
     }
 
     /// Attach a `submit` handler.
     #[must_use]
     pub fn on_submit(self, handler_id: HandlerId) -> Self {
-        self.on(BoundEventHandler { event: DomEvent::Submit, handler_id, debounce_ms: None })
+        self.on(BoundEventHandler {
+            event: DomEvent::Submit,
+            handler_id,
+            debounce_ms: None,
+        })
     }
 
     /// Attach a `focus` handler.
     #[must_use]
     pub fn on_focus(self, handler_id: HandlerId) -> Self {
-        self.on(BoundEventHandler { event: DomEvent::Focus, handler_id, debounce_ms: None })
+        self.on(BoundEventHandler {
+            event: DomEvent::Focus,
+            handler_id,
+            debounce_ms: None,
+        })
     }
 
     /// Attach a `blur` handler.
     #[must_use]
     pub fn on_blur(self, handler_id: HandlerId) -> Self {
-        self.on(BoundEventHandler { event: DomEvent::Blur, handler_id, debounce_ms: None })
+        self.on(BoundEventHandler {
+            event: DomEvent::Blur,
+            handler_id,
+            debounce_ms: None,
+        })
     }
 
     /// Attach a `keydown` handler.
     #[must_use]
     pub fn on_keydown(self, handler_id: HandlerId) -> Self {
-        self.on(BoundEventHandler { event: DomEvent::KeyDown, handler_id, debounce_ms: None })
+        self.on(BoundEventHandler {
+            event: DomEvent::KeyDown,
+            handler_id,
+            debounce_ms: None,
+        })
     }
 
     /// Attach a `keyup` handler.
     #[must_use]
     pub fn on_keyup(self, handler_id: HandlerId) -> Self {
-        self.on(BoundEventHandler { event: DomEvent::KeyUp, handler_id, debounce_ms: None })
+        self.on(BoundEventHandler {
+            event: DomEvent::KeyUp,
+            handler_id,
+            debounce_ms: None,
+        })
     }
 
     /// Set a debounce delay (ms) on the most recently attached handler.
@@ -229,135 +263,201 @@ pub fn element(tag: impl Into<String>) -> ViewBuilder {
 
 /// Start building a `<div>`.
 #[must_use]
-pub fn div() -> ViewBuilder { ViewBuilder::new("div") }
+pub fn div() -> ViewBuilder {
+    ViewBuilder::new("div")
+}
 
 /// Start building a `<span>`.
 #[must_use]
-pub fn span() -> ViewBuilder { ViewBuilder::new("span") }
+pub fn span() -> ViewBuilder {
+    ViewBuilder::new("span")
+}
 
 /// Start building a `<p>`.
 #[must_use]
-pub fn p() -> ViewBuilder { ViewBuilder::new("p") }
+pub fn p() -> ViewBuilder {
+    ViewBuilder::new("p")
+}
 
 /// Start building an `<h1>`.
 #[must_use]
-pub fn h1() -> ViewBuilder { ViewBuilder::new("h1") }
+pub fn h1() -> ViewBuilder {
+    ViewBuilder::new("h1")
+}
 
 /// Start building an `<h2>`.
 #[must_use]
-pub fn h2() -> ViewBuilder { ViewBuilder::new("h2") }
+pub fn h2() -> ViewBuilder {
+    ViewBuilder::new("h2")
+}
 
 /// Start building an `<h3>`.
 #[must_use]
-pub fn h3() -> ViewBuilder { ViewBuilder::new("h3") }
+pub fn h3() -> ViewBuilder {
+    ViewBuilder::new("h3")
+}
 
 /// Start building a `<button>`.
 #[must_use]
-pub fn button() -> ViewBuilder { ViewBuilder::new("button") }
+pub fn button() -> ViewBuilder {
+    ViewBuilder::new("button")
+}
 
 /// Start building an `<input>`.
 #[must_use]
-pub fn input() -> ViewBuilder { ViewBuilder::new("input") }
+pub fn input() -> ViewBuilder {
+    ViewBuilder::new("input")
+}
 
 /// Start building a `<label>`.
 #[must_use]
-pub fn label() -> ViewBuilder { ViewBuilder::new("label") }
+pub fn label() -> ViewBuilder {
+    ViewBuilder::new("label")
+}
 
 /// Start building an `<a>`.
 #[must_use]
-pub fn a() -> ViewBuilder { ViewBuilder::new("a") }
+pub fn a() -> ViewBuilder {
+    ViewBuilder::new("a")
+}
 
 /// Start building an `<img>`.
 #[must_use]
-pub fn img() -> ViewBuilder { ViewBuilder::new("img") }
+pub fn img() -> ViewBuilder {
+    ViewBuilder::new("img")
+}
 
 /// Start building a `<ul>`.
 #[must_use]
-pub fn ul() -> ViewBuilder { ViewBuilder::new("ul") }
+pub fn ul() -> ViewBuilder {
+    ViewBuilder::new("ul")
+}
 
 /// Start building an `<ol>`.
 #[must_use]
-pub fn ol() -> ViewBuilder { ViewBuilder::new("ol") }
+pub fn ol() -> ViewBuilder {
+    ViewBuilder::new("ol")
+}
 
 /// Start building an `<li>`.
 #[must_use]
-pub fn li() -> ViewBuilder { ViewBuilder::new("li") }
+pub fn li() -> ViewBuilder {
+    ViewBuilder::new("li")
+}
 
 /// Start building a `<form>`.
 #[must_use]
-pub fn form() -> ViewBuilder { ViewBuilder::new("form") }
+pub fn form() -> ViewBuilder {
+    ViewBuilder::new("form")
+}
 
 /// Start building an `<h4>`.
 #[must_use]
-pub fn h4() -> ViewBuilder { ViewBuilder::new("h4") }
+pub fn h4() -> ViewBuilder {
+    ViewBuilder::new("h4")
+}
 
 /// Start building an `<h5>`.
 #[must_use]
-pub fn h5() -> ViewBuilder { ViewBuilder::new("h5") }
+pub fn h5() -> ViewBuilder {
+    ViewBuilder::new("h5")
+}
 
 /// Start building an `<h6>`.
 #[must_use]
-pub fn h6() -> ViewBuilder { ViewBuilder::new("h6") }
+pub fn h6() -> ViewBuilder {
+    ViewBuilder::new("h6")
+}
 
 /// Start building a `<section>`.
 #[must_use]
-pub fn section() -> ViewBuilder { ViewBuilder::new("section") }
+pub fn section() -> ViewBuilder {
+    ViewBuilder::new("section")
+}
 
 /// Start building a `<header>`.
 #[must_use]
-pub fn header() -> ViewBuilder { ViewBuilder::new("header") }
+pub fn header() -> ViewBuilder {
+    ViewBuilder::new("header")
+}
 
 /// Start building a `<footer>`.
 #[must_use]
-pub fn footer() -> ViewBuilder { ViewBuilder::new("footer") }
+pub fn footer() -> ViewBuilder {
+    ViewBuilder::new("footer")
+}
 
 /// Start building a `<nav>`.
 #[must_use]
-pub fn nav() -> ViewBuilder { ViewBuilder::new("nav") }
+pub fn nav() -> ViewBuilder {
+    ViewBuilder::new("nav")
+}
 
 /// Start building an `<article>`.
 #[must_use]
-pub fn article() -> ViewBuilder { ViewBuilder::new("article") }
+pub fn article() -> ViewBuilder {
+    ViewBuilder::new("article")
+}
 
 /// Start building an `<aside>`.
 #[must_use]
-pub fn aside() -> ViewBuilder { ViewBuilder::new("aside") }
+pub fn aside() -> ViewBuilder {
+    ViewBuilder::new("aside")
+}
 
 /// Start building a `<table>`.
 #[must_use]
-pub fn table() -> ViewBuilder { ViewBuilder::new("table") }
+pub fn table() -> ViewBuilder {
+    ViewBuilder::new("table")
+}
 
 /// Start building a `<thead>`.
 #[must_use]
-pub fn thead() -> ViewBuilder { ViewBuilder::new("thead") }
+pub fn thead() -> ViewBuilder {
+    ViewBuilder::new("thead")
+}
 
 /// Start building a `<tbody>`.
 #[must_use]
-pub fn tbody() -> ViewBuilder { ViewBuilder::new("tbody") }
+pub fn tbody() -> ViewBuilder {
+    ViewBuilder::new("tbody")
+}
 
 /// Start building a `<tr>`.
 #[must_use]
-pub fn tr() -> ViewBuilder { ViewBuilder::new("tr") }
+pub fn tr() -> ViewBuilder {
+    ViewBuilder::new("tr")
+}
 
 /// Start building a `<td>`.
 #[must_use]
-pub fn td() -> ViewBuilder { ViewBuilder::new("td") }
+pub fn td() -> ViewBuilder {
+    ViewBuilder::new("td")
+}
 
 /// Start building a `<th>`.
 #[must_use]
-pub fn th() -> ViewBuilder { ViewBuilder::new("th") }
+pub fn th() -> ViewBuilder {
+    ViewBuilder::new("th")
+}
 
 /// Start building a `<textarea>`.
 #[must_use]
-pub fn textarea() -> ViewBuilder { ViewBuilder::new("textarea") }
+pub fn textarea() -> ViewBuilder {
+    ViewBuilder::new("textarea")
+}
 
 /// Start building a `<select>`.
 #[must_use]
-pub fn select() -> ViewBuilder { ViewBuilder::new("select") }
+pub fn select() -> ViewBuilder {
+    ViewBuilder::new("select")
+}
 
 /// Start building an `<option>`.
 #[must_use]
-pub fn option() -> ViewBuilder { ViewBuilder::new("option") }
+pub fn option() -> ViewBuilder {
+    ViewBuilder::new("option")
+}
 
 // ── Non-element view constructors ────────────────────────────────────────────
 
@@ -374,7 +474,10 @@ pub fn fragment(children: impl IntoIterator<Item = PluginView>) -> PluginView {
 /// Return `PluginView::Incompatible` with the given reason.
 /// Use this when a plugin cannot render for the current client version.
 pub fn incompatible(reason: impl Into<String>) -> PluginView {
-    PluginView::Incompatible { reason: reason.into(), fallback: None }
+    PluginView::Incompatible {
+        reason: reason.into(),
+        fallback: None,
+    }
 }
 
 /// Return `PluginView::Incompatible` with a reason and a simpler fallback view.
@@ -470,7 +573,9 @@ mod tests {
     #[test]
     fn builder_basic() {
         let view = div().class("foo").id("bar").build();
-        let PluginView::Element(el) = view else { panic!("expected Element") };
+        let PluginView::Element(el) = view else {
+            panic!("expected Element")
+        };
         assert_eq!(el.tag, "div");
         assert!(el.attrs.iter().any(|(k, _)| k == "class"));
         assert!(el.attrs.iter().any(|(k, _)| k == "id"));
@@ -479,11 +584,10 @@ mod tests {
     #[test]
     fn builder_event_handlers() {
         let hid = HandlerId("h1".into());
-        let view = button()
-            .on_click(hid.clone())
-            .debounce(200)
-            .build();
-        let PluginView::Element(el) = view else { panic!("expected Element") };
+        let view = button().on_click(hid.clone()).debounce(200).build();
+        let PluginView::Element(el) = view else {
+            panic!("expected Element")
+        };
         assert_eq!(el.handlers.len(), 1);
         assert_eq!(el.handlers[0].debounce_ms, Some(200));
     }
@@ -491,7 +595,9 @@ mod tests {
     #[test]
     fn builder_plugin_slot() {
         let view = div().plugin_slot("my-slot").build();
-        let PluginView::Element(el) = view else { panic!("expected Element") };
+        let PluginView::Element(el) = view else {
+            panic!("expected Element")
+        };
         assert!(el.attrs.iter().any(|(k, v)| {
             k == "data-plugin-slot" && matches!(v, AttrValue::String(s) if s == "my-slot")
         }));
@@ -500,24 +606,30 @@ mod tests {
     #[test]
     fn fragment_helper() {
         let f = fragment([text("a"), text("b")]);
-        let PluginView::Fragment(items) = f else { panic!("expected Fragment") };
+        let PluginView::Fragment(items) = f else {
+            panic!("expected Fragment")
+        };
         assert_eq!(items.len(), 2);
     }
 
     #[test]
     fn host_builder() {
-        let view = host("MyCard")
-            .props(serde_json::json!({ "id": 1 }))
-            .build();
-        let PluginView::HostComponent(r) = view else { panic!("expected HostComponent") };
+        let view = host("MyCard").props(serde_json::json!({ "id": 1 })).build();
+        let PluginView::HostComponent(r) = view else {
+            panic!("expected HostComponent")
+        };
         assert_eq!(r.name, "MyCard");
     }
 
     #[test]
     fn original_content_and_target() {
-        let PluginView::HostComponent(r) = original_content() else { panic!() };
+        let PluginView::HostComponent(r) = original_content() else {
+            panic!()
+        };
         assert_eq!(r.name, "__content__");
-        let PluginView::HostComponent(r) = original_target() else { panic!() };
+        let PluginView::HostComponent(r) = original_target() else {
+            panic!()
+        };
         assert_eq!(r.name, "__target__");
     }
 
@@ -525,17 +637,36 @@ mod tests {
     fn all_element_constructors_have_correct_tags() {
         let pairs: &[(&str, fn() -> ViewBuilder)] = &[
             ("p", p),
-            ("h1", h1), ("h2", h2), ("h3", h3),
-            ("h4", h4), ("h5", h5), ("h6", h6),
-            ("button", button), ("input", input), ("label", label),
-            ("a", a), ("img", img),
-            ("ul", ul), ("ol", ol), ("li", li),
+            ("h1", h1),
+            ("h2", h2),
+            ("h3", h3),
+            ("h4", h4),
+            ("h5", h5),
+            ("h6", h6),
+            ("button", button),
+            ("input", input),
+            ("label", label),
+            ("a", a),
+            ("img", img),
+            ("ul", ul),
+            ("ol", ol),
+            ("li", li),
             ("form", form),
-            ("section", section), ("header", header), ("footer", footer),
-            ("nav", nav), ("article", article), ("aside", aside),
-            ("table", table), ("thead", thead), ("tbody", tbody),
-            ("tr", tr), ("td", td), ("th", th),
-            ("textarea", textarea), ("select", select), ("option", option),
+            ("section", section),
+            ("header", header),
+            ("footer", footer),
+            ("nav", nav),
+            ("article", article),
+            ("aside", aside),
+            ("table", table),
+            ("thead", thead),
+            ("tbody", tbody),
+            ("tr", tr),
+            ("td", td),
+            ("th", th),
+            ("textarea", textarea),
+            ("select", select),
+            ("option", option),
         ];
         for (tag, ctor) in pairs {
             let PluginView::Element(el) = ctor().build() else {
@@ -549,7 +680,9 @@ mod tests {
     fn debounce_no_handler_is_noop() {
         // debounce with no handler attached should not panic
         let view = div().debounce(100).build();
-        let PluginView::Element(el) = view else { panic!() };
+        let PluginView::Element(el) = view else {
+            panic!()
+        };
         assert!(el.handlers.is_empty());
     }
 }

@@ -14,7 +14,10 @@ fn make_tree() -> PluginView {
             }),
             PluginView::Element(ViewElement {
                 tag: "button".into(),
-                attrs: vec![("data-plugin-slot".into(), AttrValue::String("actions".into()))],
+                attrs: vec![(
+                    "data-plugin-slot".into(),
+                    AttrValue::String("actions".into()),
+                )],
                 ..Default::default()
             }),
         ],
@@ -96,7 +99,10 @@ fn node_matches_recursive_delegates_to_inner() {
     assert!(node_matches(&el, &recursive_sel));
 
     // A non-matching node should return false through the delegation
-    let other = PluginView::Element(ViewElement { tag: "div".into(), ..Default::default() });
+    let other = PluginView::Element(ViewElement {
+        tag: "div".into(),
+        ..Default::default()
+    });
     assert!(!node_matches(&other, &recursive_sel));
 }
 

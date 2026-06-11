@@ -1,7 +1,7 @@
 use std::collections::BTreeMap;
 
-use dioxus_extism_pdk::prelude::*;
 use dioxus_extism_pdk::plugin;
+use dioxus_extism_pdk::prelude::*;
 
 struct FixtureWithExtension;
 
